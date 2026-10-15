@@ -2,18 +2,28 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, MessagesSquare, Play, Radio, ScrollText, User } from 'lucide-react';
+import { LogOut, MessagesSquare, Play, Plus, Radio, ScrollText, User } from 'lucide-react';
 import GlitchText from '@/components/ui/GlitchText';
 import TerminalButton from '@/components/ui/TerminalButton';
+import StatBar from '@/components/ui/StatBar';
 import { useGame } from '@/store/gameStore';
+import type { StatKey } from '@/types';
 
 const RULES = [
   '每次只推进一个回合。你输入什么，系统就裁定什么。',
-  'HP 归零即档案销毁：角色代号、三维、异能、线索、存档全部清除。',
+  '三维初始值 0~100。建档后只能消耗成长点提升，没有上限。',
+  '成长点仅由通关副本发放（HE > NE，难度越高越多），角色死亡即清零。',
+  'HP 归零即档案销毁：角色代号、三维、异能、线索、成长点全部清除。',
   '账号与你在论坛、频道留下的一切不受死亡影响。',
   'SP 低于 30 时，你看到的描述开始不可靠；但真实线索不会因此改变。',
   '判定公式：d20 + ⌊属性/10⌋ + 情境修正（含异能加成）≥ 目标值。',
   '你可以随时放弃本局，但放弃同样会被记录。',
+];
+
+const STAT_ROWS: { key: StatKey; label: string; color: 'amber' | 'toxic' }[] = [
+  { key: 'str', label: '武力', color: 'amber' },
+  { key: 'int', label: '智力', color: 'toxic' },
+  { key: 'agi', label: '敏捷', color: 'toxic' },
 ];
 
 export default function LobbyView() {
@@ -22,15 +32,23 @@ export default function LobbyView() {
   const hasArchive = useGame((s) => s.hasArchive);
   const account = useGame((s) => s.account);
   const logout = useGame((s) => s.logout);
+  const player = useGame((s) => s.player);
+  const spendPoint = useGame((s) => s.spendPoint);
   const [rules, setRules] = useState(false);
+  const [growth, setGrowth] = useState(false);
+  const points = player.growthPoints ?? 0;
 
-  const enter = () => {
+  const loadTaken = useGame((s) => s.loadTaken);
+
+  const enter = async () => {
     if (hasArchive) {
       go('DIFFICULTY');
-    } else {
-      rollStats();
-      go('CHARACTER');
+      return;
     }
+    // 先拉最新占用列表，保证分发到的是确实没人用的身份
+    await loadTaken();
+    rollStats();
+    go('CHARACTER');
   };
 
   return (
@@ -120,12 +138,34 @@ export default function LobbyView() {
           </motion.div>
         </div>
 
+        {hasArchive && (
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.41, duration: 0.45 }}
+          >
+            <TerminalButton
+              prefix="[4]"
+              onClick={() => setGrowth((v) => !v)}
+              variant={points > 0 ? 'default' : 'ghost'}
+            >
+              <span className="inline-flex items-center gap-3">
+                <Plus size={14} className="opacity-60" />
+                属性强化
+                <span className={points > 0 ? 'text-amber' : 'text-muted'}>
+                  成长点 {points}
+                </span>
+              </span>
+            </TerminalButton>
+          </motion.div>
+        )}
+
         <motion.div
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.41, duration: 0.45 }}
+          transition={{ delay: 0.48, duration: 0.45 }}
         >
-          <TerminalButton prefix="[4]" onClick={() => setRules((v) => !v)} variant="ghost">
+          <TerminalButton prefix="[5]" onClick={() => setRules((v) => !v)} variant="ghost">
             <span className="inline-flex items-center gap-3">
               <ScrollText size={14} className="opacity-60" />
               规则说明
@@ -133,6 +173,71 @@ export default function LobbyView() {
           </TerminalButton>
         </motion.div>
       </div>
+
+      {/* 属性强化：唯一的三维修正入口 */}
+      <AnimatePresence>
+        {growth && hasArchive && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.32 }}
+            className="mt-5 w-full max-w-md overflow-hidden"
+          >
+            <div className="panel scanlines px-5 py-4">
+              <div className="mb-3 flex items-baseline justify-between">
+                <p className="text-[10px] tracking-[0.3em] text-toxic/70">ENHANCE / 属性强化</p>
+                <p className="text-[10px] tracking-[0.2em] text-muted">
+                  可用成长点{' '}
+                  <span className={`font-serif text-xl ${points > 0 ? 'text-amber' : 'text-muted'}`}>
+                    {points}
+                  </span>
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {STAT_ROWS.map((row) => (
+                  <div key={row.key} className="flex items-center gap-3">
+                    <span className="w-9 shrink-0 text-[11px] tracking-[0.2em] text-chalk/80">
+                      {row.label}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <StatBar
+                        label={row.key.toUpperCase()}
+                        value={player[row.key]}
+                        max={100}
+                        low={0}
+                        color={row.color}
+                        showNumber={false}
+                      />
+                    </div>
+                    <span className="w-10 shrink-0 text-right font-mono text-sm text-chalk/90">
+                      {player[row.key]}
+                    </span>
+                    <button
+                      onClick={() => spendPoint(row.key)}
+                      disabled={points <= 0}
+                      title={points <= 0 ? '没有可用成长点' : `消耗 1 点，${row.label} +1`}
+                      className={`flex h-6 w-6 shrink-0 items-center justify-center border text-sm transition-colors ${
+                        points <= 0
+                          ? 'cursor-not-allowed border-hairline text-muted/40'
+                          : 'border-amber/60 text-amber hover:bg-amber/15 hover:shadow-glow-toxic'
+                      }`}
+                    >
+                      +
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <p className="mt-4 border-t border-hairline pt-3 text-[10px] leading-relaxed tracking-[0.12em] text-muted">
+                每消耗 1 点成长点，对应属性 +1，无上限。成长点只能靠通关副本获得，
+                角色死亡时随档案一并清零。
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 规则说明 */}
       <AnimatePresence>

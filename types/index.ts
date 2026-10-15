@@ -29,6 +29,8 @@ export interface AbilitySnapshot {
   rarity: 'common' | 'rare' | 'epic' | 'legendary';
   /** 注入 LLM 的判定规则 */
   bonus?: string;
+  /** 身份所属类别，如「通灵与神秘学类」 */
+  category?: string;
 }
 
 /** 结局类型 */
@@ -37,7 +39,7 @@ export type EndingType = 'HE' | 'NE' | 'BE';
 /** 难度 */
 export type DifficultyId = 'easy' | 'hard' | 'purgatory';
 
-/** 玩家三维属性 */
+/** 玩家三维属性（初始 0~100，成长点可无限追加） */
 export interface PlayerStats {
   /** 武力 */
   str: number;
@@ -46,6 +48,12 @@ export interface PlayerStats {
   /** 敏捷 */
   agi: number;
 }
+
+/** 三维键名 */
+export type StatKey = keyof PlayerStats;
+
+/** 初始掷点上限（超过即为成长点投入所得） */
+export const STAT_BASE_MAX = 100;
 
 /** 资源条 */
 export interface PlayerVitals {
@@ -67,6 +75,8 @@ export interface PlayerState extends PlayerVitals, PlayerStats {
   clueTotal: number;
   /** 当前回合 */
   turn: number;
+  /** 未分配的成长点（仅由完成副本发放，角色层，死亡清零） */
+  growthPoints: number;
   /** 随机异能：终身锁定，死亡后重新随机 */
   ability?: AbilitySnapshot | null;
 }
@@ -75,10 +85,14 @@ export type Rank = 'F' | 'D' | 'C' | 'B' | 'A' | 'S' | 'SS' | 'SSS';
 
 export interface Scenario {
   id: string;
+  /** 文档中的编号（1~98） */
+  no: number;
   title: string;
   /** 档案袋上的背景描述（禁止剧透数值） */
   blurb: string;
   clueTotal: number;
+  /** 所属难度档：简单 / 困难 / 炼狱 */
+  difficulty: DifficultyId;
 }
 
 export interface Difficulty {

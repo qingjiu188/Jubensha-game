@@ -20,6 +20,7 @@ export default function EndingView() {
 function GoodEnding({ type }: { type: 'HE' | 'NE' }) {
   const player = useGame((s) => s.player);
   const reset = useGame((s) => s.reset);
+  const reward = useGame((s) => s.lastReward);
   const he = type === 'HE';
 
   const truth = he
@@ -71,9 +72,14 @@ function GoodEnding({ type }: { type: 'HE' | 'NE' }) {
             </div>
           </div>
           <div className="text-right">
-            <p className="text-[10px] tracking-[0.3em] text-muted">GROWTH</p>
-            <p className="font-serif text-2xl text-toxic">+{he ? 3 : 1}</p>
-            <p className="text-[10px] tracking-[0.2em] text-toxic/70">成长点已发放</p>
+            <p className="text-[10px] tracking-[0.3em] text-muted">GROWTH / 成长点</p>
+            <p className="font-serif text-2xl text-toxic">+{reward}</p>
+            <p className="text-[10px] tracking-[0.2em] text-toxic/70">
+              当前可用 {player.growthPoints ?? 0} 点
+            </p>
+            <p className="mt-1 text-[10px] tracking-[0.2em] text-amber/70">
+              回主界面可分配（1 点 = 属性 +1，无上限）
+            </p>
           </div>
         </div>
 
@@ -146,7 +152,7 @@ function BadEnding() {
           {/* 被销毁的 UI 元素：每打印一行，对应元素消失 */}
           <div className="panel noise relative mb-6 p-5">
             <div className="relative z-[2] grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <Field label="姓名" value={player.name || '无名者'} gone={gone('name')} />
+              <Field label="身份" value={player.name || '未登记'} gone={gone('identity')} />
               <Field label="身份" value={player.role} gone={gone('role')} />
               <Field label="评级" value={player.rank} gone={gone('rank')} />
               <Field label="线索" value={`${player.clues}/${player.clueTotal}`} gone={gone('clues')} />

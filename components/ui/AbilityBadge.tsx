@@ -4,23 +4,29 @@ import {
   BatteryCharging,
   Brain,
   Compass,
+  Cross,
   Droplets,
   Eye,
   EyeOff,
   Flame,
+  Footprints,
   Ghost,
   Hand,
   HeartPulse,
   Infinity as InfinityIcon,
   Orbit,
+  Palette,
   Radar,
   RotateCcw,
   Scroll,
   Search,
   ShieldOff,
   Skull,
+  Sparkles,
+  Sprout,
   Utensils,
   Wind,
+  Wrench,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -56,6 +62,29 @@ const ICONS: Record<string, LucideIcon> = {
   Orbit,
   InfinityIcon,
   EyeOff,
+  Sparkles,
+  Sprout,
+  Cross,
+  Wrench,
+  Palette,
+  Footprints,
+};
+
+/**
+ * 身份类别 → 图标。
+ * 《副本异能.docx》的 100 个异能按类别取图标，覆盖全部条目。
+ */
+const CATEGORY_ICON: Record<string, string> = {
+  通灵与神秘学类: 'Ghost',
+  医疗与科学类: 'HeartPulse',
+  探索与调查类: 'Search',
+  边缘与黑暗职业类: 'Skull',
+  特殊状态与弱势群体类: 'ShieldOff',
+  宗教与信仰类: 'Cross',
+  现代科技与工程类: 'Wrench',
+  '艺术、文化与心理类': 'Palette',
+  '自然、元素与变异类': 'Sprout',
+  '概念、规则与Meta类': 'InfinityIcon',
 };
 
 /** 异能名 → 图标（按 lib/abilities.ts 里的 icon 字段取） */
@@ -101,14 +130,18 @@ export function AbilityIcon({
   name,
   rarity,
   size = 'md',
+  category,
 }: {
   name: string;
   rarity: Rarity;
   size?: 'sm' | 'md' | 'lg';
+  /** 身份类别：优先按类别取图标，覆盖 100 个异能 */
+  category?: string;
 }) {
   const meta = RARITY_META[rarity];
   const s = SIZE[size];
-  const Icon = ICONS[NAME_ICON[name] ?? 'Eye'] ?? Eye;
+  const Icon =
+    ICONS[(category && CATEGORY_ICON[category]) || NAME_ICON[name] || ''] ?? Eye;
   const shine = rarity === 'epic' || rarity === 'legendary';
 
   return (
@@ -169,7 +202,12 @@ export default function AbilityBadge({ ability, size = 'md', showDesc = true, cl
           'linear-gradient(180deg, rgba(255,255,255,0.035), rgba(0,0,0,0.55))',
       }}
     >
-      <AbilityIcon name={ability.name} rarity={rarity} size={size} />
+      <AbilityIcon
+        name={ability.name}
+        rarity={rarity}
+        size={size}
+        category={ability.category}
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span

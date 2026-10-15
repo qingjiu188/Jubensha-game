@@ -5,14 +5,18 @@ export function totalScore(s: PlayerStats): number {
   return s.str + s.int + s.agi;
 }
 
+/**
+ * 三维初始 0~100（三项满分 300），成长点投入后总分可超过 300。
+ * 阈值按 300 分制重排，超出上限一律 SSS。
+ */
 const TABLE: { min: number; rank: Rank }[] = [
-  { min: 54, rank: 'SSS' },
-  { min: 48, rank: 'SS' },
-  { min: 43, rank: 'S' },
-  { min: 38, rank: 'A' },
-  { min: 33, rank: 'B' },
-  { min: 28, rank: 'C' },
-  { min: 22, rank: 'D' },
+  { min: 270, rank: 'SSS' },
+  { min: 240, rank: 'SS' },
+  { min: 210, rank: 'S' },
+  { min: 180, rank: 'A' },
+  { min: 150, rank: 'B' },
+  { min: 120, rank: 'C' },
+  { min: 90, rank: 'D' },
   { min: 0, rank: 'F' },
 ];
 
@@ -40,7 +44,9 @@ export function snarkOf(s: PlayerStats, rank: Rank): string {
   const weakName = { str: '武力', int: '智力', agi: '敏捷' }[weakest];
 
   if (rank === 'SSS')
-    return '系统备注：三项全满。档案科建议你立刻停止呼吸，以免污染平均值。你大概率活不过第三回合——因为规则不允许这种东西存在。';
+    return t >= 300
+      ? '系统备注：三项全满 300 分。档案科建议你立刻停止呼吸，以免污染平均值。你大概率活不过第三回合——因为规则不允许这种东西存在。'
+      : `系统备注：${t} 分，已越过档案科划定的红线。审批意见只有两个字：观察。`;
   if (rank === 'SS' || rank === 'S')
     return `系统备注：${t} 分，纸面上很好看。副本里最好看的那批人，棺材也最贵。`;
   if (rank === 'A' || rank === 'B')

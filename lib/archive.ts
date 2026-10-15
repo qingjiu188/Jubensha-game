@@ -22,14 +22,17 @@ export async function fetchArchive(): Promise<ArchiveResponse> {
 }
 
 export async function createArchive(input: {
+  /** 角色代号 = 系统分发的身份 */
   username: string;
+  /** 身份（全局唯一，服务端会校验占用情况并可能改派） */
+  identity: string;
   str: number;
   int: number;
   agi: number;
   rating: string;
   currentRole?: string | null;
   ability?: AbilitySnapshot | null;
-}): Promise<{ archive: DbArchive; playerNo: number }> {
+}): Promise<{ archive: DbArchive; playerNo: number; reassigned?: string | null }> {
   const res = await fetch('/api/archive', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -38,14 +41,23 @@ export async function createArchive(input: {
       hp: 100,
       sp: 100,
       st: 100,
+      // 新档案的成长点从 0 起算，只能通过通关累积
+      growthPoints: 0,
       status: 'alive',
       currentClues: [],
       turn: 0,
     }),
   });
-  if (!res.ok) throw new Error(`ARCHIVE_POST ${res.status}`);
-  const data = (await res.json()) as { archive: DbArchive; playerNo: number };
-  return { archive: data.archive, playerNo: data.playerNo ?? 0 };
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `ARCHIVE_POST ${res.status}`);
+  }
+  const data = (await res.json()) as {
+    archive: DbArchive;
+    playerNo: number;
+    reassigned?: string | null;
+  };
+  return { archive: data.archive, playerNo: data.playerNo ?? 0, reassigned: data.reassigned ?? null };
 }
 
 export async function patchArchive(patch: Partial<DbArchive>): Promise<void> {

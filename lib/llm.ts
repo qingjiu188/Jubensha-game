@@ -23,7 +23,8 @@ const SYSTEM_PROMPT = `你是文字互动游戏《副本 INSTANCE》的系统。
 A. 动作
 B. 动作
 C. 动作
-5. 只输出正文与选项，不要解释你的推理。`;
+5. 只输出正文与选项，不要解释你的推理。
+6. 玩家三维属性为 0~100（成长点投入后可超过 100）。判定公式：d20 + ⌊属性/10⌋ + 情境修正 ≥ 目标值，目标值一般取 10~25，属性越高成功率越高。不要在正文里直接暴露属性数值。`;
 
 /**
  * 组装 System Prompt：把玩家异能的判定规则注入进去，
@@ -35,7 +36,7 @@ function buildSystemPrompt(payload: SendActionPayload): string {
   if (!ab?.bonus) return SYSTEM_PROMPT;
 
   return `${SYSTEM_PROMPT}
-6. 本局玩家拥有异能，你必须在相关情境中严格执行它的效果，并在判定行中体现加成（例如写成「判定：智力 | d20=11 + 7 + 3(${ab.name}) = 21 | DC 16 | 成功」）：
+7. 本局玩家拥有异能，你必须在相关情境中严格执行它的效果，并在判定行中体现加成（例如写成「判定：智力 | d20=11 + 7 + 3(${ab.name}) = 21 | DC 16 | 成功」）：
 ${ab.bonus}
 异能触发时，用一句话客观描写它生效的样子，不要解释机制。`;
 }
@@ -51,7 +52,8 @@ async function mockLLM(payload: SendActionPayload): Promise<SendActionResult> {
   const step = SCRIPT[idx];
 
   return {
-    narrative: step.narrative,
+    // 系统分发的身份注入正文占位符
+    narrative: step.narrative.replace(/\{identity\}/g, payload.playerState.name || '未登记'),
     options: step.options,
     patch: step.patch,
     ending: step.ending,

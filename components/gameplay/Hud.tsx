@@ -56,6 +56,7 @@ export default function Hud() {
               name={player.ability.name}
               rarity={player.ability.rarity}
               size="sm"
+              category={player.ability.category}
             />
             <div className="leading-tight">
               <p className="text-[9px] tracking-[0.3em] text-muted">ABILITY</p>

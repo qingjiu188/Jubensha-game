@@ -4,13 +4,15 @@ import { motion } from 'framer-motion';
 import { AlertTriangle } from 'lucide-react';
 import TerminalButton from '@/components/ui/TerminalButton';
 import { useGame } from '@/store/gameStore';
-import { DIFFICULTIES, SCENARIOS } from '@/lib/mock';
+import { DIFFICULTIES } from '@/lib/mock';
+import { SCENARIOS, scenariosOf } from '@/lib/scenarios';
 import type { Scenario } from '@/types';
 
 export default function DifficultyView() {
   const difficulty = useGame((s) => s.difficulty);
   const chooseDifficulty = useGame((s) => s.chooseDifficulty);
   const chooseScenario = useGame((s) => s.chooseScenario);
+  const list = scenariosOf(difficulty);
 
   return (
     <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-6 overflow-y-auto px-6 py-8">
@@ -51,14 +53,18 @@ export default function DifficultyView() {
         })}
       </div>
 
-      {/* 剧本卡 */}
+      {/* 剧本卡（按所选难度档筛选） */}
       <div className="mt-2 flex items-baseline justify-between">
-        <h3 className="text-xs tracking-[0.35em] text-muted">AVAILABLE INSTANCES / 待选剧本</h3>
-        <span className="text-[10px] tracking-[0.2em] text-muted/70">共 {SCENARIOS.length} 份</span>
+        <h3 className="text-xs tracking-[0.35em] text-muted">
+          AVAILABLE INSTANCES / 待选剧本 · {DIFFICULTIES.find((d) => d.id === difficulty)?.name}
+        </h3>
+        <span className="text-[10px] tracking-[0.2em] text-muted/70">
+          本档 {list.length} 份 / 全库 {SCENARIOS.length} 份
+        </span>
       </div>
 
       <div className="grid gap-4 pb-4 sm:grid-cols-2 lg:grid-cols-3">
-        {SCENARIOS.map((s, i) => (
+        {list.map((s, i) => (
           <ScenarioCard key={s.id} s={s} index={i} onPick={() => chooseScenario(s)} />
         ))}
       </div>
@@ -72,25 +78,40 @@ function ScenarioCard({ s, index, onPick }: { s: Scenario; index: number; onPick
       initial={{ opacity: 0, y: 14 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.15 + index * 0.06 }}
-      className="group h-[200px] [perspective:1200px]"
+      className="group h-[200px] cursor-pointer [perspective:1200px]"
+      onClick={onPick}
+      role="button"
+      tabIndex={0}
+      title={`挂载副本：${s.title}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPick();
+        }
+      }}
     >
       <div className="relative h-full w-full transition-transform duration-500 [transform-style:preserve-3d] group-hover:[transform:rotateY(180deg)]">
         {/* 正面：档案袋纹理 + 剧本名 */}
         <div className="panel dossier-texture absolute inset-0 flex flex-col justify-between p-5 [backface-visibility:hidden]">
           <div>
             <span className="text-[10px] tracking-[0.3em] text-muted">
-              NO.{String(index + 1).padStart(2, '0')}
+              NO.{String(s.no).padStart(2, '0')}
             </span>
             <h4 className="mt-2 font-serif text-2xl leading-snug tracking-[0.12em] text-chalk">
               {s.title}
             </h4>
           </div>
           <p className="text-[11px] leading-relaxed text-muted">{s.blurb}</p>
+          {/* 常驻可见的进入提示：不依赖 hover 翻转也能知道可以点 */}
+          <div className="mt-2 flex items-center justify-between text-[10px] tracking-[0.25em] text-toxic/80">
+            <span>点击挂载此副本</span>
+            <span>→</span>
+          </div>
           {/* 封口绳 */}
           <div className="pointer-events-none absolute left-0 right-0 top-1/2 h-px bg-gradient-to-r from-transparent via-blood/40 to-transparent" />
         </div>
 
-        {/* 背面：hover 翻转后浮现血迹 / 线索图标 */}
+        {/* 背面：hover 翻转后浮现血迹 / 线索图标（点击同样由外层接管） */}
         <div className="panel absolute inset-0 flex flex-col items-center justify-center gap-3 border-blood/50 bg-gradient-to-br from-[#1a0d0d] to-void p-5 [backface-visibility:hidden] [transform:rotateY(180deg)]">
           <BloodStain />
           <p className="text-center font-serif text-lg tracking-[0.2em] text-blood-bright">进入副本</p>
@@ -98,7 +119,7 @@ function ScenarioCard({ s, index, onPick }: { s: Scenario; index: number; onPick
             实例一经挂载，中途退出视为死亡。
           </p>
           <div className="mt-2 w-40">
-            <TerminalButton onClick={onPick} variant="danger" prefix="[→]">
+            <TerminalButton variant="danger" prefix="[→]">
               开始
             </TerminalButton>
           </div>

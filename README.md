@@ -49,12 +49,14 @@ components/
 lib/
   db.ts        双模数据层（Prisma/MySQL ⇄ JSON 文件）+ 社区社交 CRUD
   auth.ts      Auth.js v5 配置（username + key）
-  abilities.ts 20 个异能池（普通/稀有/史诗/传说）+ 权重抽取
+  identities.ts 100 个身份+异能总表（源自《副本异能.docx》，唯一数据源）
+  abilities.ts  身份分发 / 唯一性校验 / 稀有度元数据
+  scenarios.ts  98 份副本（源自《副本.docx》，按难度分档）
   llm.ts       服务端 LLM 调度（内置脚本 Mock + 真实模型预留，注入异能规则）
   api.ts       客户端剧情接口
   archive.ts   客户端档案 / 论坛 / 好友接口
   parser.ts    【画面】【音效】【肢体】【判定】标签解析器
-  mock.ts      剧本卡 / 身份池 / 剧情脚本 / 销毁清单
+  mock.ts      难度表 / 剧情脚本 / 销毁清单（副本与身份已外置到上表）
   rank.ts      评级 F~SSS + 毒舌点评
 store/gameStore.ts               Zustand 状态机 + 数据库同步
 prisma/schema.prisma             User / Archive / Post / Comment / Like / Favorite / Friendship
@@ -62,7 +64,7 @@ prisma/schema.prisma             User / Archive / Post / Comment / Like / Favori
 
 ---
 
-## 二·五、三个核心机制
+## 二·五、四个核心机制
 
 ### 1. 账号层 vs 角色层（死亡不清零社交资产）
 
@@ -74,21 +76,40 @@ User（账号层）────────────── 死亡不影响
   └ friendships                             好友关系
         │ 1 : 1
 Archive（角色层）──────────── 死亡即物理 DELETE
+  ├ identity / identityCategory  系统分发的身份（UNIQUE，销毁即释放）
   ├ str / int / agi / hp / sp / st
-  ├ abilityName / abilityDesc / abilityRarity   随机异能
+  ├ abilityName / abilityDesc / abilityRarity   与身份绑定的异能
   └ currentClues / scenarioId / currentRole / turn
 ```
 
 首次建档沿用注册时拿到的编号；**每次死亡后重建，`playerNo` 取全局最大值 +1**，于是同一个人会变成 No.4 → No.6 → No.7。
 
-### 2. 随机异能系统（`lib/abilities.ts`）
+### 2. 身份分发 + 全局唯一（`lib/identities.ts` / `lib/abilities.ts` / `《副本异能.docx》`）
 
-- 20 个异能，分四档稀有度，**按权重抽取**：普通 46% / 稀有 30% / 史诗 17% / 传说 7%。
-- 建档或死亡重建时随机，终身锁定；死亡后重新随机。
-- UI：按稀有度变色发光（普通灰 / 稀有蓝 / 史诗紫 / 传说金），史诗与传说带流光扫过；每个异能有专属 Lucide 图标，展示在建档页与 HUD 上。
-- **不是摆设**：异能的判定规则（`bonus`）会被注入 LLM 的 System Prompt，模型在生成判定时必须计入加成，例如「夜视」在暗处 `+2` 会直接写进判定行：`判定：智力 | d20=11 + 7 + 3(夜视) = 21 | DC 16 | 成功`。
+- **代号不再由玩家输入**：系统从《副本异能.docx》收录的 **100 个身份**中分发（灵媒 / 法医 / 侦探 / 黑客 / 幸运儿 …），身份即玩家代号。
+- **身份 ↔ 异能一一绑定**：选中身份就确定了异能（灵媒→灵视、法医→尸语者），不再独立抽取。建档时终身锁定，死亡重建才会重新分发。
+- **全局唯一**：`Archive.identity` 带 UNIQUE 索引。建档接口会先查占用列表，前端指定的身份若已被占用或不合法，**服务端直接改派**另一个未占用的并在返回里给出 `reassigned` 原因；全部 100 个被占用时返回 409。
+- **销毁即释放**：BE 销毁时把 `identity` 置 NULL（MySQL 唯一索引允许多个 NULL），随后物理删除整条档案 → 该身份重新回到可分发池。
+- 稀有度（普通 50 / 稀有 20 / 史诗 21 / 传说 9）按身份类别推导，**只用于 UI 分层**，不影响抽取概率（从剩余池等概率随机）。
+- UI：按稀有度变色发光（普通灰 / 稀有蓝 / 史诗紫 / 传说金），史诗与传说带流光；图标按身份类别取（通灵=Ghost、医疗=HeartPulse、科技=Wrench …）。
+- **不是摆设**：异能效果会作为 `bonus` 注入 LLM 的 System Prompt，模型在判定时必须计入，例如「弱点洞察」写成：`判定：观察 | d20=11 + 7 + 3(弱点洞察) = 21 | DC 16 | 成功`。
 
-### 3. 社区与社交的暗黑化包装
+### 2·五、副本库（`lib/scenarios.ts` / `《副本.docx》`）
+
+- **98 份副本**，全部来自文档，按难度分档：简单 33 / 困难 33 / 炼狱 32（文档目录写 67—99，实际内容到 98，不补第 99 份）。
+- 筛选页按当前选中的难度只展示该档剧本，卡片保留文档编号 `NO.xx`。
+- 每份副本只有标题 + 背景描述（不剧透数值），线索总量统一 5。
+
+### 3. 三维属性与成长点（`lib/rank.ts` / `store/gameStore.ts`）
+
+- **初始值 0~100**：武力 / 智力 / 敏捷在建档时各自独立随机，闭区间 `[0, 100]`；建档接口会把越界值钳回区间内（超过 100 的部分不允许在建档时写入）。
+- **唯一升级途径 = 成长点**：档案确认后，属性只能通过消耗成长点 +1，**没有上限**（可以超过 100，进度条转金色并显示 `✦`，雷达图按比例钳到外圈不外溢）。
+- **成长点只由通关发放**：`growthReward(ending, difficulty)` —— HE 基础 3 点、NE 基础 2 点、BE 为 0；难度倍率 普通 ×1 / 困难 ×1.5 / 炼狱 ×2，向上取整且至少 1 点。
+- **归属角色层**：成长点存在 `Archive.growthPoints`，角色死亡时随档案一并清零（与论坛、好友这些账号层资产相反）。
+- 分配入口在主界面的「属性强化」面板（仅当前有存活档案时显示），每点一次消耗 1 点并立即 `PATCH` 落库，同时重算评级。
+- 评级按三项总分（满分 300）：SSS 270 / SS 240 / S 210 / A 180 / B 150 / C 120 / D 90 / F 0，超出 300 仍为 SSS。
+
+### 4. 社区与社交的暗黑化包装
 
 - **论坛 = 暗网加密终端**：终端提示符 `survivor@instance:/var/forum$`、代码块样式输入框、`TRACE :: No.12 · 代号` 的作者行、红色警告条、密文日志流。支持标签（#求助 / #剧透警告 / #玄学…）、点赞、收藏、转发、楼中楼评论。
 - **好友 = 幸存者加密频道**：信标卡片展示自己的 `No.X` 并可一键复制；通过编号或代号发送连接请求；列表显示对方状态（存活 / 已死亡 / 未建档）与当前角色评级。
@@ -130,6 +151,54 @@ npm run dev             # 重启后自动切到 MySQL（.env 的 DATABASE_URL �
 切换是**运行时自动判定**的：启动时对 `DATABASE_URL` 做一次 250ms TCP 探测，通 → Prisma + MySQL；不通 → JSON 文件。业务代码一行都不用改。
 
 > **没有数据库也能跑。** 数据层会在启动时对 `DATABASE_URL` 做一次 250ms TCP 探测；不通就自动切换到 `.data/db.json` 文件存储，登录、建档、副本、销毁全流程完全一致。等你把 MySQL 起好，填好 `DATABASE_URL` 重启即可自动切回真库，业务代码一行都不用改。
+
+## 三·五、部署到 Vercel（生成公网链接，点开就玩）
+
+> 线上是 serverless，没有可写磁盘，**必须配一个云数据库**；不配 `DATABASE_URL` 时写入会直接报 `SERVERLESS_NO_DATABASE`。
+
+### 1. 申请一个免费云数据库（MySQL 兼容，零代码改动）
+
+推荐 **TiDB Cloud Serverless**（免费 5GB，MySQL 协议）：
+
+1. 注册 tidbcloud.com → 创建 Serverless 集群（区域选离你近的）
+2. 集群页面点 **Connect** → 复制连接串，形如：
+   ```
+   mysql://xxxx.root:密码@gateway01.xxx.prod.aws.tidbcloud.com:4000/test
+   ```
+3. TiDB 要求 TLS，在串尾加上 `?sslaccept=strict`（Prisma 写法）：
+   ```
+   DATABASE_URL="mysql://xxx:yyy@gateway01.xxx.tidbcloud.com:4000/instance?sslaccept=strict"
+   ```
+
+> 想用 Postgres（Neon / Supabase / Vercel Postgres）也行：把 `prisma/schema.prisma` 的 `provider` 改成 `"postgresql"`，并把 `Post.tags Json?` 改成 `tags String[]`，其余不用动。
+
+### 2. 在本地把表建到线上库
+
+```bash
+# 临时用线上连接串（不要写进 .env，避免影响本地开发）
+DATABASE_URL="mysql://...tidbcloud.com:4000/instance?sslaccept=strict" npx prisma db push
+```
+
+### 3. Vercel 导入仓库
+
+1. vercel.com → **Add New → Project** → 导入 `qingjiu188/Jubensha-game`
+2. Framework Preset 选 **Next.js**，其余保持默认
+3. **Environment Variables** 填这三项：
+
+| Key | Value |
+|---|---|
+| `DATABASE_URL` | 上一步的线上连接串 |
+| `AUTH_SECRET` | `openssl rand -base64 32` 生成 |
+| `AUTH_TRUST_HOST` | `true` |
+| `LLM_API_KEY` | 可选，不填则走内置脚本 Mock（照样能玩） |
+
+4. Deploy → 拿到 `https://xxx.vercel.app`，发给别人即可直接玩
+
+构建脚本已内置 `prisma generate`（`build` 与 `postinstall` 都会跑），Vercel 不需要额外配置。
+
+### 4. 让朋友玩之前自己先跑一遍
+
+部署完先自己走一遍：注册代号 → 建档（看系统分发的身份 + 异能）→ 选难度 → 点副本卡进入 → 打字推进剧情。确认无误再把链接发出去。
 
 ### 本机启动 MySQL（macOS / Homebrew）
 
@@ -194,7 +263,9 @@ model Archive {
   id     String @id @default(cuid())
   userId String @unique
   user   User   @relation("CurrentArchive", fields: [userId], references: [id], onDelete: Cascade)
-  username String                          // 角色代号（可不同于账号代号）
+  username String                          // 角色代号 = 系统分发的身份
+  identity String?  @unique                // 身份唯一键（销毁置 NULL，等于释放占用）
+  identityCategory String?                 // 身份类别，如「通灵与神秘学类」
   str Int
   int Int
   agi Int
@@ -203,7 +274,7 @@ model Archive {
   st Int @default(100)
   rating       String
   growthPoints Int    @default(0)
-  abilityName   String                     // 随机异能，终身锁定
+  abilityName   String                     // 与身份绑定的异能，终身锁定
   abilityDesc   String
   abilityRarity String                     // common / rare / epic / legendary
   status       String @default("alive")    // alive / dead
@@ -226,8 +297,9 @@ model Archive {
 | POST | `/api/auth/register` | 档案接入：代号正则 + 唯一性校验 + bcrypt 哈希 |
 | GET | `/api/auth/check?username=` | 代号实时查重（前端输入时调用） |
 | GET/POST | `/api/auth/[...nextauth]` | Auth.js 凭证登录（username + key）/ 登出 / session |
+| GET | `/api/identity` | 身份占用情况：`total / taken[] / remaining / byCategory` |
 | GET | `/api/archive` | 查询账号 + 档案（无则 `archive: null`） |
-| POST | `/api/archive` | 建档：写入三维、评级、异能；重建时递增 `playerNo` |
+| POST | `/api/archive` | 建档：分发并锁定身份（占用冲突时自动改派，返回 `reassigned`）；重建时递增 `playerNo` |
 | PATCH | `/api/archive` | 同步状态；`{wipe: 字段名}` 时清空单个字段（BE 逐行销毁） |
 | DELETE | `/api/archive` | 物理删除档案（只删角色层，账号与社交资产保留） |
 | POST | `/api/game/action` | 剧情推进：发 `playerState（含异能）+ userInput`，返回 `narrative / options / patch / ending` |
@@ -248,7 +320,7 @@ model Archive {
 ## 六、状态机
 
 ```
-AUTH ──接入/新档案──► 查询档案 ─┬─ 无档案 ──► CHARACTER ──POST 建档（掷异能）──► DIFFICULTY
+AUTH ──接入/新档案──► 查询档案 ─┬─ 无档案 ──► CHARACTER ──POST 建档（分发唯一身份）──► DIFFICULTY
                                 └─ 有档案 ──► LOBBY ──────────────────────────► DIFFICULTY
 LOBBY ──┬──► COMMUNITY（暗网论坛）
         └──► SOCIAL（幸存者频道）

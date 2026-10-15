@@ -1,4 +1,4 @@
-import type { Difficulty, Scenario } from '@/types';
+import type { Difficulty } from '@/types';
 
 /* =========================================================
  * Mock 静态数据
@@ -10,42 +10,11 @@ export const DIFFICULTIES: Difficulty[] = [
   { id: 'purgatory', name: '炼狱', desc: '无存档。死亡即销毁档案，且系统会保留你的惨叫用于校准。', danger: true },
 ];
 
-/** 剧本卡：只有名字 + 背景描述，禁止任何数值与剧透 */
-export const SCENARIOS: Scenario[] = [
-  {
-    id: 's1',
-    title: '雨夜电报',
-    blurb: '1937 年，上海租界。最后一封电报在你手里变成了一块冰。',
-    clueTotal: 5,
-  },
-  {
-    id: 's2',
-    title: '第七位乘客',
-    blurb: '夜班公交，核载六人。上车时你数了七张脸，下车时还是七张。',
-    clueTotal: 5,
-  },
-  {
-    id: 's3',
-    title: '井底回声',
-    blurb: '枯井里没有水，只有回声。它比你自己更熟悉你的声音。',
-    clueTotal: 5,
-  },
-  {
-    id: 's4',
-    title: '无面合影',
-    blurb: '毕业照最后一排站着一个人。所有人都不记得他是谁，包括洗照片的人。',
-    clueTotal: 5,
-  },
-  {
-    id: 's5',
-    title: '标本室 03',
-    blurb: '医学标本室的第三具标本，标签写着你的名字，生产日期是明年。',
-    clueTotal: 5,
-  },
-];
-
-/** 身份标签池（建档时随机） */
-export const ROLE_POOL = ['见习调查员', '档案修复师', '夜班守灵人', '遗物清点员', '第三方见证者'];
+/**
+ * 剧本卡：唯一数据源《副本.docx》→ lib/scenarios.ts（98 份，按难度分档）。
+ * 这里做转发，保持旧引用路径可用。
+ */
+export { SCENARIOS, scenariosOf } from '@/lib/scenarios';
 
 /**
  * 多轮剧情脚本（Mock）。
@@ -60,7 +29,7 @@ export const SCRIPT: {
 }[] = [
   {
     narrative:
-      '【画面】铁门在身后合拢，门缝里挤出一线惨白的灯。走廊向两侧延伸，地板上有未被擦干净的暗色拖痕。\n【音效】远处有规律的滴水声，每七秒一次，比秒针慢，比呼吸快。\n【肢体】你不自觉地握紧了拳头，指甲陷进掌心。\n\n系统已载入副本。你的身份是「第三方见证者」。这里的一切都会记录，包括你的沉默。',
+      '【画面】铁门在身后合拢，门缝里挤出一线惨白的灯。走廊向两侧延伸，地板上有未被擦干净的暗色拖痕。\n【音效】远处有规律的滴水声，每七秒一次，比秒针慢，比呼吸快。\n【肢体】你不自觉地握紧了拳头，指甲陷进掌心。\n\n系统已载入副本。你的身份是「{identity}」。这里的一切都会记录，包括你的沉默。',
     options: ['A. 沿着拖痕向前走', 'B. 回头检查那扇铁门', 'C. 喊一声，看看有没有回应'],
     patch: { turn: 1 },
   },
@@ -100,12 +69,12 @@ export const SCRIPT: {
 
 /** BE 结局的逐行销毁清单（每打印一行，对应 UI 元素消失） */
 export const DESTRUCTION_LOG: { text: string; target: string }[] = [
-  { text: '正在解除绑定：身份标签', target: 'role' },
+  { text: '正在解除绑定：身份类别', target: 'role' },
   { text: '正在清除：武力数据', target: 'str' },
   { text: '正在清除：智力数据', target: 'int' },
   { text: '正在清除：敏捷数据', target: 'agi' },
   { text: '正在回收：全部线索（0/5）', target: 'clues' },
   { text: '正在注销：档案编号', target: 'rank' },
-  { text: '正在抹除：姓名', target: 'name' },
+  { text: '正在回收并释放：身份代号', target: 'identity' },
   { text: '正在销毁：本轮副本实例', target: 'instance' },
 ];

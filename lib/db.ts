@@ -38,6 +38,10 @@ export interface DbArchive {
   id: string;
   userId: string;
   username: string;
+  /** 系统分发的身份（全局唯一，死亡随档案释放） */
+  identity: string | null;
+  /** 身份所属类别 */
+  identityCategory: string | null;
   str: number;
   int: number;
   agi: number;
@@ -165,6 +169,8 @@ function normalizeStore(raw: Partial<JsonStore>): JsonStore {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     archives: ((raw.archives ?? []) as any[]).filter((a) => userIds.has(a.userId)).map((a) => ({
       ...a,
+      identity: a.identity ?? null,
+      identityCategory: a.identityCategory ?? null,
       abilityName: a.abilityName ?? '—',
       abilityDesc: a.abilityDesc ?? '',
       abilityRarity: a.abilityRarity ?? 'common',
@@ -198,7 +204,19 @@ async function readStore(): Promise<JsonStore> {
   }
 }
 
+/**
+ * Vercel 等 serverless 环境没有可写磁盘，JSON 降级在那里不可用。
+ * 线上部署必须配 DATABASE_URL，否则写入时直接给出明确报错，
+ * 而不是静默失败（否则会表现为「注册成功但登录不上」）。
+ */
+function assertWritable(): void {
+  if (process.env.VERCEL && !process.env.DATABASE_URL) {
+    throw new Error('SERVERLESS_NO_DATABASE：线上环境必须配置 DATABASE_URL');
+  }
+}
+
 async function writeStore(next: JsonStore): Promise<void> {
+  assertWritable();
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(DATA_FILE, JSON.stringify(next, null, 2), 'utf8');
 }
@@ -307,6 +325,8 @@ function mapArchive(a: any): DbArchive {
     id: a.id,
     userId: a.userId,
     username: a.username,
+    identity: a.identity ?? null,
+    identityCategory: a.identityCategory ?? null,
     str: a.str,
     int: a.int,
     agi: a.agi,
@@ -511,6 +531,28 @@ export async function getArchive(userId: string): Promise<DbArchive | null> {
   return store.archives.find((a) => a.userId === userId) ?? null;
 }
 
+/**
+ * 已被占用的身份列表（全局唯一性校验用）。
+ * 只统计有 identity 的档案：BE 销毁会先置 null 再物理删除，等于立即释放。
+ */
+export async function listTakenIdentities(): Promise<string[]> {
+  const p = await getPrisma();
+  if (p) {
+    const rows = await p.archive.findMany({
+      where: { identity: { not: null } },
+      select: { identity: true },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return rows
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((r: any) => r.identity)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((x: any): x is string => typeof x === 'string' && !!x);
+  }
+  const store = await readStore();
+  return store.archives.map((a) => a.identity).filter((x): x is string => typeof x === 'string' && !!x);
+}
+
 export async function createArchive(input: ArchiveCreateInput): Promise<DbArchive> {
   // 先推进世代：首次建档沿用注册时的编号，死亡后重建才递增
   await advanceGeneration(input.userId);
@@ -523,6 +565,8 @@ export async function createArchive(input: ArchiveCreateInput): Promise<DbArchiv
       data: {
         userId: input.userId,
         username: input.username,
+        identity: input.identity ?? null,
+        identityCategory: input.identityCategory ?? null,
         str: input.str,
         int: input.int,
         agi: input.agi,
@@ -603,6 +647,8 @@ export async function deleteArchive(userId: string): Promise<boolean> {
 export async function wipeField(userId: string, field: keyof DbArchive): Promise<void> {
   const table: Partial<Record<keyof DbArchive, ArchivePatch>> = {
     username: { username: '' },
+    // 身份销毁：清掉代号 + 释放占用（NULL 不占唯一索引）
+    identity: { username: '', identity: null, identityCategory: null },
     str: { str: 0 },
     int: { int: 0 },
     agi: { agi: 0 },

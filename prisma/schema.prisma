@@ -56,8 +56,12 @@ model Archive {
   userId String @unique
   user   User   @relation("CurrentArchive", fields: [userId], references: [id], onDelete: Cascade)
 
-  /// 角色代号（可不同于账号代号）
+  /// 角色代号 = 系统分发的身份（如「灵媒」），与异能一一绑定
   username String
+  /// 身份唯一键：全局不允许重复占用；死亡销毁档案后自动释放（MySQL 唯一索引允许多个 NULL）
+  identity String? @unique
+  /// 身份所属类别（如「通灵与神秘学类」）
+  identityCategory String?
 
   str Int
   int Int

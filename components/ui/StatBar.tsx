@@ -21,16 +21,19 @@ const GRADIENT: Record<string, string> = {
 };
 
 export default function StatBar({ label, value, max = 100, low = 30, color = 'hp', showNumber = true }: Props) {
+  /** 超出刻度上限（成长点投入所致）：进度条打满并转金色 */
+  const over = value > max;
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
-  const danger = pct <= low;
+  const danger = !over && pct <= low;
 
   return (
     <div className="w-full">
       <div className="mb-1 flex items-baseline justify-between text-[10px] tracking-[0.18em] text-muted">
         <span>{label}</span>
         {showNumber && (
-          <span className={danger ? 'text-blood-bright' : 'text-chalk/70'}>
-            {Math.round(value)}/{max}
+          <span className={danger ? 'text-blood-bright' : over ? 'text-amber' : 'text-chalk/70'}>
+            {Math.round(value)}
+            {over ? ' ✦' : `/${max}`}
           </span>
         )}
       </div>
@@ -40,8 +43,14 @@ export default function StatBar({ label, value, max = 100, low = 30, color = 'hp
           style={{
             background: danger
               ? 'linear-gradient(90deg,#8b0000,#ff2a2a)'
-              : GRADIENT[color],
-            boxShadow: danger ? '0 0 10px rgba(196,30,30,0.7)' : '0 0 8px rgba(255,255,255,0.08)',
+              : over
+                ? 'linear-gradient(90deg,#8a6b00,#ffd85e)'
+                : GRADIENT[color],
+            boxShadow: danger
+              ? '0 0 10px rgba(196,30,30,0.7)'
+              : over
+                ? '0 0 12px rgba(255,216,94,0.75)'
+                : '0 0 8px rgba(255,255,255,0.08)',
           }}
           initial={false}
           animate={{ width: `${pct}%` }}

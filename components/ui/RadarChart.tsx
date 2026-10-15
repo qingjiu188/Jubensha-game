@@ -7,7 +7,7 @@ interface Props {
 }
 
 /** 三维雷达图（三角形），纯 SVG 手写 */
-export default function RadarChart({ data, max = 20, size = 190 }: Props) {
+export default function RadarChart({ data, max = 100, size = 190 }: Props) {
   const cx = size / 2;
   const cy = size / 2;
   const r = size / 2 - 26;
@@ -18,7 +18,9 @@ export default function RadarChart({ data, max = 20, size = 190 }: Props) {
     return [cx + Math.cos(ang) * r * ratio, cy + Math.sin(ang) * r * ratio] as const;
   };
 
-  const poly = data.map((d, i) => pt(i, Math.max(0.05, d.value / max)).join(',')).join(' ');
+  // ratio 钳到 1：成长点投入后属性可超过刻度上限，图形不外溢
+  const ratio = (v: number) => Math.min(1, Math.max(0.05, v / max));
+  const poly = data.map((d, i) => pt(i, ratio(d.value)).join(',')).join(' ');
   const gridRings = [0.25, 0.5, 0.75, 1];
 
   return (
@@ -42,7 +44,7 @@ export default function RadarChart({ data, max = 20, size = 190 }: Props) {
       {/* 数据区 */}
       <polygon points={poly} fill="rgba(0,255,157,0.16)" stroke="#00ff9d" strokeWidth={1.4} />
       {data.map((d, i) => {
-        const [x, y] = pt(i, Math.max(0.05, d.value / max));
+        const [x, y] = pt(i, ratio(d.value));
         return <circle key={d.label} cx={x} cy={y} r={2.6} fill="#00ff9d" />;
       })}
 

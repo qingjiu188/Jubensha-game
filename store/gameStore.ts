@@ -10,12 +10,14 @@ import type {
   Phase,
   PlayerState,
   Scenario,
+  StatKey,
   Token,
 } from '@/types';
+import { STAT_BASE_MAX } from '@/types';
 import { parseNarrative } from '@/lib/parser';
 import { rankOf, totalScore } from '@/lib/rank';
-import { ROLE_POOL } from '@/lib/mock';
-import { rollAbility } from '@/lib/abilities';
+import { rollIdentity } from '@/lib/abilities';
+import type { IdentityEntry } from '@/lib/identities';
 import { sendAction } from '@/lib/api';
 import {
   createArchive as apiCreateArchive,
@@ -37,7 +39,8 @@ const PURGE_MAP: Record<string, keyof DbArchive> = {
   agi: 'agi',
   clues: 'currentClues',
   rank: 'rating',
-  name: 'username',
+  /** 身份：清掉代号并释放全局占用，随后整条档案被物理删除 */
+  identity: 'identity',
   instance: 'turn',
   ability: 'abilityName',
 };
@@ -59,6 +62,12 @@ interface GameStore {
   busy: boolean;
   ending: EndingType;
   endingTitle: string;
+  /** 上一次通关发放的成长点（结算页展示用） */
+  lastReward: number;
+  /** 已被占用的身份（全局唯一） */
+  takenIdentities: string[];
+  /** 剩余可分发的身份数 */
+  identityRemaining: number;
   /** BE 销毁动画已经抹除的字段 */
   destroyed: string[];
 
@@ -72,8 +81,13 @@ interface GameStore {
 
   /* ---------- 动作 ---------- */
   go: (p: Phase) => void;
+  /** 身份由系统分发，不再由玩家输入；此接口保留用于兼容 */
   setName: (name: string) => void;
+  /** 拉取已被占用的身份（唯一性） */
+  loadTaken: () => Promise<void>;
   rollStats: () => void;
+  /** 消耗 1 点成长点，给指定属性 +1（无上限） */
+  spendPoint: (key: StatKey) => void;
   bootstrap: () => Promise<void>;
   login: (username: string, key: string) => Promise<void>;
   register: (username: string, key: string) => Promise<void>;
@@ -88,7 +102,7 @@ interface GameStore {
   purgeField: (field: string) => Promise<void>;
   finalizePurge: () => Promise<void>;
   triggerEnding: (type: EndingType, title?: string) => void;
-  reset: () => void;
+  reset: () => Promise<void>;
 }
 
 const EMPTY_PLAYER: PlayerState = {
@@ -97,15 +111,27 @@ const EMPTY_PLAYER: PlayerState = {
   hp: 100,
   sp: 100,
   st: 100,
-  str: 10,
-  int: 10,
-  agi: 10,
+  str: 0,
+  int: 0,
+  agi: 0,
   rank: 'F',
   clues: 0,
   clueTotal: 5,
   turn: 0,
+  growthPoints: 0,
   ability: null,
 };
+
+/**
+ * 通关奖励的成长点（角色层，死亡随档案清零）
+ * 基础值按结局，难度提供倍率，向上取整且至少 1 点。
+ */
+export function growthReward(ending: EndingType, difficulty: DifficultyId): number {
+  const base = ending === 'HE' ? 3 : ending === 'NE' ? 2 : 0;
+  if (base === 0) return 0;
+  const mult = difficulty === 'purgatory' ? 2 : difficulty === 'hard' ? 1.5 : 1;
+  return Math.max(1, Math.round(base * mult));
+}
 
 /** 追加一条日志（自动走解析器） */
 function pushLog(list: LogEntry[], role: LogEntry['role'], raw: string): LogEntry[] {
@@ -117,8 +143,8 @@ function pushLog(list: LogEntry[], role: LogEntry['role'], raw: string): LogEntr
 /** 数据库记录 → 前端 PlayerState */
 function hydrate(a: DbArchive): PlayerState {
   return {
-    name: a.username,
-    role: a.currentRole ?? '未登记',
+    name: a.identity || a.username,
+    role: a.identityCategory || a.currentRole || '未登记',
     hp: a.hp,
     sp: a.sp,
     st: a.st,
@@ -129,11 +155,14 @@ function hydrate(a: DbArchive): PlayerState {
     clues: Array.isArray(a.currentClues) ? a.currentClues.length : 0,
     clueTotal: 5,
     turn: a.turn ?? 0,
+    growthPoints: Number(a.growthPoints) || 0,
     ability: a.abilityName && a.abilityName !== '—'
       ? {
           name: a.abilityName,
           desc: a.abilityDesc,
           rarity: (a.abilityRarity as AbilitySnapshot['rarity']) ?? 'common',
+          bonus: `【${a.abilityName}】${a.abilityDesc ?? ''}`,
+          category: a.identityCategory ?? undefined,
         }
       : null,
   };
@@ -153,16 +182,25 @@ async function readSessionAccount(): Promise<Account | null> {
   }
 }
 
-/** 掷一套新属性 + 新异能（建档 / 死亡重建时调用） */
-function freshRoll(): { stats: { str: number; int: number; agi: number }; role: string; ability: AbilitySnapshot } {
-  const roll = () => 3 + Math.floor(Math.random() * 18);
+/**
+ * 掷一套新属性 + 分发一个未被占用的身份（建档 / 死亡重建时调用）。
+ * 身份与异能一一绑定：选中身份即确定异能，不再独立抽取。
+ */
+function freshRoll(taken: string[] = []): {
+  stats: { str: number; int: number; agi: number };
+  role: string;
+  identity: string;
+  entry: IdentityEntry;
+} {
+  // 初始值 0~100（闭区间）
+  const roll = () => Math.floor(Math.random() * (STAT_BASE_MAX + 1));
   const stats = { str: roll(), int: roll(), agi: roll() };
-  const role = ROLE_POOL[Math.floor(Math.random() * ROLE_POOL.length)];
-  const a = rollAbility();
+  const entry = rollIdentity(taken);
   return {
     stats,
-    role,
-    ability: { name: a.name, desc: a.desc, rarity: a.rarity, bonus: a.bonus },
+    role: entry.category,
+    identity: entry.identity,
+    entry,
   };
 }
 
@@ -176,6 +214,9 @@ export const useGame = create<GameStore>((set, get) => ({
   busy: false,
   ending: 'NE',
   endingTitle: '',
+  lastReward: 0,
+  takenIdentities: [],
+  identityRemaining: 0,
   destroyed: [],
 
   account: null,
@@ -188,14 +229,60 @@ export const useGame = create<GameStore>((set, get) => ({
 
   setName: (name) => set((s) => ({ player: { ...s.player, name } })),
 
-  /** 随机生成三维属性 + 异能，并同步评级 */
+  /** 拉取已被占用的身份列表 */
+  loadTaken: async () => {
+    try {
+      const res = await fetch('/api/identity', { cache: 'no-store' });
+      const data = (await res.json()) as { taken?: string[]; remaining?: number };
+      set({ takenIdentities: data.taken ?? [], identityRemaining: data.remaining ?? 0 });
+    } catch {
+      /* 拉取失败时按空占用处理，服务端仍会兜底 */
+    }
+  },
+
+  /** 随机生成三维属性 + 分发身份（含绑定异能），并同步评级 */
   rollStats: () =>
     set((s) => {
-      const { stats, role, ability } = freshRoll();
+      const { stats, role, identity, entry } = freshRoll(s.takenIdentities);
       return {
-        player: { ...s.player, ...stats, role, ability, rank: rankOf(stats) },
+        player: {
+          ...s.player,
+          ...stats,
+          name: identity,
+          role,
+          ability: {
+            name: entry.ability,
+            desc: entry.desc,
+            rarity: entry.rarity,
+            bonus: `【${entry.ability}】${entry.desc}`,
+            category: entry.category,
+          },
+          rank: rankOf(stats),
+        },
       };
     }),
+
+  /**
+   * 消耗 1 点成长点 → 指定属性 +1。
+   * 这是档案确认后唯一的属性提升途径：不受 100 上限约束。
+   */
+  spendPoint: (key) => {
+    const s = get();
+    if (s.player.growthPoints <= 0) return;
+
+    const player: PlayerState = { ...s.player, growthPoints: s.player.growthPoints - 1 };
+    player[key] = s.player[key] + 1;
+    player.rank = rankOf(player);
+
+    set({ player });
+    void patchArchive({
+      str: player.str,
+      int: player.int,
+      agi: player.agi,
+      growthPoints: player.growthPoints,
+      rating: player.rank,
+    });
+  },
 
   /* =======================================================
    * 启动：读 session → 查档案 → 决定落到哪个视图
@@ -218,12 +305,14 @@ export const useGame = create<GameStore>((set, get) => ({
       if (archive && archive.status === 'alive') {
         set({ account, player: hydrate(archive), hasArchive: true, authReady: true, phase: 'LOBBY' });
       } else {
-        // 无档案 / 档案已销毁 → 重新建档（掷新属性与新异能）
+        // 无档案 / 档案已销毁 → 重新建档：先拉占用列表，再分发身份
         set({ account, player: { ...EMPTY_PLAYER }, hasArchive: false, authReady: true, phase: 'CHARACTER' });
+        await get().loadTaken();
         get().rollStats();
       }
     } catch {
       set({ account: acc, hasArchive: false, authReady: true, phase: 'CHARACTER' });
+      await get().loadTaken();
       get().rollStats();
     }
   },
@@ -279,14 +368,15 @@ export const useGame = create<GameStore>((set, get) => ({
     set({ account: null, hasArchive: false, player: { ...EMPTY_PLAYER }, phase: 'AUTH' });
   },
 
-  /** 确认建档 → POST /api/archive 写入数据库（异能终身锁定） */
+  /** 确认建档 → POST /api/archive 写入数据库（身份与异能终身锁定） */
   confirmCharacter: async () => {
     const st = get();
     if (!st.player.name.trim()) return;
     set({ submitting: true });
     try {
-      const { playerNo } = await apiCreateArchive({
+      const { playerNo, archive, reassigned } = await apiCreateArchive({
         username: st.player.name.trim(),
+        identity: st.player.name.trim(),
         str: st.player.str,
         int: st.player.int,
         agi: st.player.agi,
@@ -294,15 +384,39 @@ export const useGame = create<GameStore>((set, get) => ({
         currentRole: st.player.role,
         ability: st.player.ability,
       });
+
+      // 服务端可能因占用而改派身份，一律以返回为准
+      const finalName = archive?.identity || st.player.name.trim();
+      const finalAbility = archive
+        ? {
+            ...st.player.ability,
+            name: archive.abilityName || st.player.ability?.name || '',
+            desc: archive.abilityDesc || st.player.ability?.desc || '',
+            rarity: (archive.abilityRarity as AbilitySnapshot['rarity']) ?? 'common',
+          }
+        : st.player.ability;
+
       set({
         submitting: false,
         hasArchive: true,
-        player: { ...st.player, rank: rankOf(st.player) },
+        player: {
+          ...st.player,
+          name: finalName,
+          role: archive?.identityCategory || st.player.role,
+          ability: finalAbility,
+          rank: rankOf(st.player),
+        },
+        takenIdentities: [...new Set([...st.takenIdentities, finalName])],
+        identityRemaining: Math.max(0, st.identityRemaining - 1),
+        authError: reassigned ? null : null,
         account: st.account ? { ...st.account, playerNo: playerNo || st.account.playerNo } : null,
         phase: 'DIFFICULTY',
       });
-    } catch {
-      set({ submitting: false, authError: '建档失败，请重试' });
+    } catch (e) {
+      set({
+        submitting: false,
+        authError: e instanceof Error ? e.message : '建档失败，请重试',
+      });
     }
   },
 
@@ -392,14 +506,19 @@ export const useGame = create<GameStore>((set, get) => ({
       ];
     }
 
-    set({ logs, player, options: result.options, busy: false });
+    // 通关结算：发放成长点（BE 死亡不发，档案随后被销毁）
+    const reward = result.ending ? growthReward(result.ending, st.difficulty) : 0;
+    if (reward > 0) player.growthPoints = player.growthPoints + reward;
 
-    // 同步到数据库（HP / SP / ST / 线索 / 回合 / 当前剧本）
+    set({ logs, player, options: result.options, busy: false, lastReward: reward });
+
+    // 同步到数据库（HP / SP / ST / 线索 / 回合 / 成长点 / 当前剧本）
     void patchArchive({
       hp: player.hp,
       sp: player.sp,
       st: player.st,
       turn: player.turn,
+      growthPoints: player.growthPoints,
       currentClues: Array.from({ length: player.clues }, (_, i) => `clue-${i + 1}`),
       scenarioId: after.scenario?.id ?? null,
       scenarioName: after.scenario?.title ?? null,
@@ -443,9 +562,9 @@ export const useGame = create<GameStore>((set, get) => ({
 
   triggerEnding: (type, title) => set({ ending: type, endingTitle: title ?? '', phase: 'ENDING' }),
 
-  reset: () => {
+  reset: async () => {
     const s = get();
-    // 档案已销毁 → 回建档（掷新属性与新异能）；仍存活 → 回主页
+    // 档案已销毁 → 回建档（刷新占用列表后重新分发身份）；仍存活 → 回主页
     if (s.hasArchive) {
       set({
         phase: 'LOBBY',
@@ -458,10 +577,24 @@ export const useGame = create<GameStore>((set, get) => ({
       return;
     }
 
-    const { stats, role, ability } = freshRoll();
+    await get().loadTaken();
+    const { stats, role, identity, entry } = freshRoll(get().takenIdentities);
     set({
       phase: 'CHARACTER',
-      player: { ...EMPTY_PLAYER, ...stats, role, ability, rank: rankOf(stats) },
+      player: {
+        ...EMPTY_PLAYER,
+        ...stats,
+        name: identity,
+        role,
+        ability: {
+          name: entry.ability,
+          desc: entry.desc,
+          rarity: entry.rarity,
+          bonus: `【${entry.ability}】${entry.desc}`,
+          category: entry.category,
+        },
+        rank: rankOf(stats),
+      },
       scenario: null,
       logs: [],
       destroyed: [],
