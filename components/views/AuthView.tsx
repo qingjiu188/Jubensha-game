@@ -35,6 +35,22 @@ export default function AuthView() {
   const register = useGame((s) => s.register);
   const submitting = useGame((s) => s.submitting);
   const authError = useGame((s) => s.authError);
+  const authErrorKind = useGame((s) => s.authErrorKind);
+  const clearAuthError = useGame((s) => s.clearAuthError);
+
+  /** 切换 tab 或改动输入时，清掉上一次的失败提示 */
+  const switchTab = (t: Tab) => {
+    setTab(t);
+    clearAuthError();
+  };
+  const onUsernameChange = (v: string) => {
+    setUsername(v.replace(/\s/g, ''));
+    clearAuthError();
+  };
+  const onKeyChange = (v: string) => {
+    setKey(v);
+    clearAuthError();
+  };
 
   /* ---------- 实时校验（仅注册 tab） ---------- */
   useEffect(() => {
@@ -121,7 +137,7 @@ export default function AuthView() {
                 return (
                   <button
                     key={t.id}
-                    onClick={() => setTab(t.id)}
+                    onClick={() => switchTab(t.id)}
                     className={`flex items-center justify-center gap-2 px-3 py-2.5 text-xs tracking-[0.3em] transition-colors ${
                       on ? 'bg-toxic/10 text-toxic shadow-glow-toxic' : 'text-muted hover:text-chalk'
                     }`}
@@ -153,7 +169,7 @@ export default function AuthView() {
                 <div className="relative">
                   <input
                     value={username}
-                    onChange={(e) => setUsername(e.target.value.replace(/\s/g, ''))}
+                    onChange={(e) => onUsernameChange(e.target.value)}
                     placeholder="NightOwl7"
                     maxLength={20}
                     className="w-full border border-hairline bg-black/60 px-4 py-2.5 pr-9 font-mono text-sm tracking-[0.15em] text-toxic outline-none transition-colors placeholder:text-muted/40 focus:border-toxic/60 focus:shadow-glow-toxic"
@@ -188,7 +204,7 @@ export default function AuthView() {
                   <input
                     type="password"
                     value={key}
-                    onChange={(e) => setKey(e.target.value)}
+                    onChange={(e) => onKeyChange(e.target.value)}
                     placeholder="••••••••"
                     className="w-full border border-hairline bg-black/60 px-4 py-2.5 pl-9 font-mono text-sm tracking-[0.25em] text-toxic outline-none transition-colors placeholder:text-muted/40 focus:border-toxic/60 focus:shadow-glow-toxic"
                   />
@@ -197,13 +213,36 @@ export default function AuthView() {
             </div>
 
             {authError && (
-              <motion.p
+              <motion.div
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="mt-4 border-l-2 border-blood px-3 py-2 text-[11px] tracking-[0.2em] text-blood-bright"
+                className="mt-4 border-l-2 border-blood bg-blood/5 px-3 py-2"
               >
-                ⚠ {authError}
-              </motion.p>
+                <p className="text-[11px] tracking-[0.2em] text-blood-bright">
+                  ⚠ {authError}
+                </p>
+
+                {/* 账号不存在：给一条明确的下一步 */}
+                {authErrorKind === 'no-user' && (
+                  <p className="mt-2 text-[10px] leading-relaxed tracking-[0.15em] text-muted">
+                    该代号还没有档案。请确认拼写，或
+                    <button
+                      onClick={() => switchTab('register')}
+                      className="mx-1 text-toxic underline underline-offset-2 transition-colors hover:text-toxic/80"
+                    >
+                      切换到「新档案」
+                    </button>
+                    用这个代号注册。
+                  </p>
+                )}
+
+                {/* 密钥错误：只提示重试，不暴露更多信息 */}
+                {authErrorKind === 'bad-key' && (
+                  <p className="mt-2 text-[10px] leading-relaxed tracking-[0.15em] text-muted">
+                    代号存在，但接入密钥不匹配，请重新输入。
+                  </p>
+                )}
+              </motion.div>
             )}
 
             <div className="mt-6">

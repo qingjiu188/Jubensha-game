@@ -43,6 +43,9 @@ import type { DbArchive } from '@/lib/db';
 let seq = 0;
 const uid = () => `log_${++seq}`;
 
+/** /api/auth/check 对「已存在」返回的文案，登录时靠它区分账号错 / 密钥错 */
+const TAKEN_REASON = '该档案代号已被占用';
+
 /** BE 销毁清单的 target → 数据库字段 */
 const PURGE_MAP: Record<string, keyof DbArchive> = {
   role: 'currentRole',
@@ -93,6 +96,14 @@ interface GameStore {
   /** 数据库里是否已存在存活档案 */
   hasArchive: boolean;
   authError: string | null;
+  /**
+   * 登录/注册失败的具体类型，用于区分「账号不存在」与「密钥错误」：
+   *   no-user      代号未注册
+   *   bad-key      代号存在但密钥错误
+   *   credentials  无法区分（网络/格式问题）时的兜底
+   *   other        建档等其他环节的错误
+   */
+  authErrorKind: 'none' | 'no-user' | 'bad-key' | 'credentials' | 'other';
   submitting: boolean;
   /** 启动阶段的网络异常（连不上服务端时展示重试卡片，替代无限转圈） */
   netError: string | null;
@@ -119,6 +130,8 @@ interface GameStore {
   /** 写入 / 清空玩家自带的 AI 接入配置 */
   setAI: (cfg: PlayerAIConfig | null) => void;
   bootstrap: () => Promise<void>;
+  /** 切换 tab / 重新输入时清掉上一次的失败提示 */
+  clearAuthError: () => void;
   login: (username: string, key: string) => Promise<void>;
   register: (username: string, key: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -277,6 +290,7 @@ export const useGame = create<GameStore>((set, get) => ({
   authReady: false,
   hasArchive: false,
   authError: null,
+  authErrorKind: 'none',
   submitting: false,
   netError: null,
 
@@ -471,33 +485,81 @@ export const useGame = create<GameStore>((set, get) => ({
     }
   },
 
+  clearAuthError: () => set({ authError: null, authErrorKind: 'none' }),
+
   login: async (username, key) => {
-    set({ submitting: true, authError: null });
-    const res = await signIn('credentials', { username, key, redirect: false });
-    if (res?.error) {
-      set({ submitting: false, authError: '档案代号或接入密钥错误' });
+    set({ submitting: true, authError: null, authErrorKind: 'none' });
+
+    // 提交前先探一次代号是否存在，好把「账号错」和「密钥错」分开提示
+    let exists: boolean | null = null;
+    try {
+      const r = await timeoutFetch(
+        `/api/auth/check?username=${encodeURIComponent(username)}`,
+        {},
+        8000,
+      );
+      const data = (await r.json()) as { ok?: boolean; reason?: string };
+      if (data.reason === TAKEN_REASON) exists = true;
+      else if (data.ok === true) exists = false;
+    } catch {
+      exists = null; // 查不到就走兜底提示
+    }
+
+    let res: Awaited<ReturnType<typeof signIn>> | undefined;
+    try {
+      res = await signIn('credentials', { username, key, redirect: false });
+    } catch {
+      set({ submitting: false, authError: '网络异常，请稍后重试', authErrorKind: 'credentials' });
       return;
     }
+
+    if (res?.error) {
+      if (exists === false) {
+        set({
+          submitting: false,
+          authErrorKind: 'no-user',
+          authError: `代号「${username}」尚未注册`,
+        });
+      } else if (exists === true) {
+        set({
+          submitting: false,
+          authErrorKind: 'bad-key',
+          authError: '接入密钥错误，请重新输入',
+        });
+      } else {
+        set({
+          submitting: false,
+          authErrorKind: 'credentials',
+          authError: '档案代号或接入密钥错误',
+        });
+      }
+      return;
+    }
+
     await get().bootstrap();
     set({ submitting: false });
   },
 
   register: async (username, key) => {
-    set({ submitting: true, authError: null });
+    set({ submitting: true, authError: null, authErrorKind: 'none' });
     try {
-      const r = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, key }),
-      });
+      const r = await timeoutFetch(
+        '/api/auth/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, key }),
+        },
+        15000,
+      );
       const data = (await r.json()) as { error?: string };
       if (!r.ok) {
-        set({ submitting: false, authError: data.error ?? '接入失败' });
+        set({ submitting: false, authErrorKind: 'other', authError: data.error ?? '接入失败' });
         return;
       }
       await get().login(username, key);
     } catch {
-      set({ submitting: false, authError: '网络异常' });
+      set({ submitting: false, authErrorKind: 'other', authError: '网络异常，请稍后重试' });
     }
   },
 
@@ -546,7 +608,8 @@ export const useGame = create<GameStore>((set, get) => ({
         },
         takenIdentities: [...new Set([...st.takenIdentities, finalName])],
         identityRemaining: Math.max(0, st.identityRemaining - 1),
-        authError: reassigned ? null : null,
+        authError: null,
+        authErrorKind: 'none',
         account: st.account ? { ...st.account, playerNo: playerNo || st.account.playerNo } : null,
         phase: 'DIFFICULTY',
       });
@@ -554,6 +617,7 @@ export const useGame = create<GameStore>((set, get) => ({
       set({
         submitting: false,
         authError: e instanceof Error ? e.message : '建档失败，请重试',
+        authErrorKind: 'other',
       });
     }
   },
