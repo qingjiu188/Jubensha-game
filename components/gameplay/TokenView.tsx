@@ -1,14 +1,14 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { AudioLines, Camera, Dices, PackageOpen, Quote, Skull } from 'lucide-react';
+import { AudioLines, Dices, PackageOpen, Quote, Skull } from 'lucide-react';
 import Typewriter from '@/components/ui/Typewriter';
 import type { Token } from '@/types';
 
 /**
  * 单个 Token 的渲染器。
  * 四类标签各有独立视觉：
- *   画面 -> 左侧细竖线 + 相机角标（流式，无相框）
+ *   画面 -> 左侧细竖线 + 「场景」文字标签（流式，无相框）
  *   音效 -> 声波图标 + 斜体
  *   肢体 -> 灰色小字旁白
  *   判定 -> 骰子系统框（成功绿 / 失败红）
@@ -24,11 +24,11 @@ export default function TokenView({ token, animate, onDone }: { token: Token; an
           transition={{ duration: 0.35 }}
           className="my-2.5 border-l-2 border-toxic/40 pl-3"
         >
-          <p className="flex items-start gap-2 text-[12.5px] leading-[1.9] text-chalk/85">
-            <Camera size={12} className="mt-[6px] shrink-0 text-toxic/55" />
-            <span>
-              {animate ? <Typewriter text={token.text} speed={20} onDone={onDone} /> : token.text}
+          <p className="text-[12.5px] leading-[1.9] text-chalk/85">
+            <span className="mr-2 align-middle text-[10px] tracking-[0.25em] text-toxic/55">
+              场景
             </span>
+            {animate ? <Typewriter text={token.text} speed={20} onDone={onDone} /> : token.text}
           </p>
         </motion.div>
       );
