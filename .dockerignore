@@ -1,0 +1,14 @@
+.git
+.github
+.next
+.data
+.workbuddy
+node_modules
+.env
+.env.*
+!.env.example
+tmp
+*.log
+.DS_Store
+README.md
+tsconfig.tsbuildinfo
