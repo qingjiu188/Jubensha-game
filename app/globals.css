@@ -1,0 +1,165 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  /* 字体变量：Google Fonts 加载失败时自动回落，不影响构建 */
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+  --font-serif: 'Playfair Display', 'Noto Serif SC', 'Songti SC', Georgia, serif;
+}
+
+html,
+body {
+  height: 100%;
+  background-color: #0a0a0c;
+  color: #e0e0e0;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  overflow: hidden;
+}
+
+/* 细滚动条，贴合终端风格 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(224, 224, 224, 0.16);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 255, 157, 0.35);
+}
+
+@layer components {
+  /* 细边框 + 微弱发光的通用面板 */
+  .panel {
+    @apply border border-hairline bg-abyss/70 backdrop-blur-[2px];
+  }
+
+  /* 扫描线纹理（关键 UI 组件使用） */
+  .scanlines::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      180deg,
+      rgba(224, 224, 224, 0.045) 0px,
+      rgba(224, 224, 224, 0.045) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    z-index: 1;
+  }
+
+  /* 噪点纹理（SVG feTurbulence，静态栅格化，不逐帧重算） */
+  .noise::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.16;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg%20xmlns='http://www.w3.org/2000/svg'%20width='160'%20height='160'><filter%20id='n'><feTurbulence%20type='fractalNoise'%20baseFrequency='0.85'%20numOctaves='3'%20stitchTiles='stitch'/><feColorMatrix%20type='saturate'%20values='0'/></filter><rect%20width='160'%20height='160'%20filter='url(%23n)'%20opacity='0.75'/></svg>");
+    background-size: 160px 160px;
+    z-index: 1;
+  }
+
+  /* RSS 档案袋纹理（剧本卡背面） */
+  .dossier-texture {
+    background-image:
+      repeating-linear-gradient(45deg, rgba(224, 224, 224, 0.025) 0 2px, transparent 2px 7px),
+      repeating-linear-gradient(-45deg, rgba(224, 224, 224, 0.02) 0 2px, transparent 2px 9px);
+  }
+
+  /* SSS 级金色流光 */
+  .gold-shimmer {
+    background-image: linear-gradient(
+      100deg,
+      #d4af37 0%,
+      #fff3c4 25%,
+      #d4af37 45%,
+      #8a6d16 60%,
+      #fff3c4 85%,
+      #d4af37 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* 故障文字：双色错位伪影 */
+  .glitch-text {
+    position: relative;
+  }
+  .glitch-text::before,
+  .glitch-text::after {
+    content: attr(data-text);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .glitch-text::before {
+    color: #00ff9d;
+    transform: translate(-2px, -1px);
+    opacity: 0.55;
+    mix-blend-mode: screen;
+    animation: glitchA 2.4s infinite steps(2);
+  }
+  .glitch-text::after {
+    color: #c41e1e;
+    transform: translate(2px, 1px);
+    opacity: 0.6;
+    mix-blend-mode: screen;
+    animation: glitchB 3.1s infinite steps(2);
+  }
+}
+
+@keyframes glitchA {
+  0%, 88% {
+    transform: translate(0, 0);
+  }
+  90% {
+    transform: translate(-4px, 1px);
+  }
+  94% {
+    transform: translate(3px, -1px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes glitchB {
+  0%, 85% {
+    transform: translate(0, 0);
+  }
+  89% {
+    transform: translate(4px, -1px);
+  }
+  93% {
+    transform: translate(-3px, 1px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+/* 红色死亡闪屏 */
+.death-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(196, 30, 30, 0.85), rgba(139, 0, 0, 0.35) 55%, transparent 78%);
+}
