@@ -12,10 +12,40 @@ import type { Token } from '@/types';
  *   音效 -> 声波图标 + 斜体
  *   肢体 -> 灰色小字旁白
  *   判定 -> 骰子系统框（成功绿 / 失败红）
+ *
+ * 流式播放：父层按「整条日志」维护一个全局进度，这里只负责
+ * 把属于自己的那一段字符切出来，从而做到从开头一路输出到结尾。
  */
-export default function TokenView({ token, animate, onDone }: { token: Token; animate: boolean; onDone?: () => void }) {
+export default function TokenView({
+  token,
+  animate,
+  stream,
+  onDone,
+}: {
+  token: Token;
+  animate: boolean;
+  /** 流式模式下：本 token 已经打出的字数 + 光标是否停在它身上 */
+  stream?: { chars: number; caret: boolean } | null;
+  onDone?: () => void;
+}) {
+  /** 统一处理「流式截断 / 独立打字机 / 直接全显」三种情况 */
+  const body = (text: string, speed: number) => {
+    if (!animate) return <>{text}</>;
+    if (stream) {
+      return (
+        <>
+          {text.slice(0, stream.chars)}
+          {stream.caret && (
+            <span className="ml-0.5 inline-block h-[1em] w-[0.5em] translate-y-[0.12em] animate-caret bg-toxic/80 align-middle" />
+          )}
+        </>
+      );
+    }
+    return <Typewriter text={text} speed={speed} onDone={onDone} />;
+  };
+
   switch (token.kind) {
-    /* ---------- 画面：细竖线 + 相机角标，跟正文一样流式排布 ---------- */
+    /* ---------- 画面：细竖线 + 「场景」标签 ---------- */
     case 'scene':
       return (
         <motion.div
@@ -28,7 +58,7 @@ export default function TokenView({ token, animate, onDone }: { token: Token; an
             <span className="mr-2 align-middle text-[10px] tracking-[0.25em] text-toxic/55">
               场景
             </span>
-            {animate ? <Typewriter text={token.text} speed={20} onDone={onDone} /> : token.text}
+            {body(token.text, 20)}
           </p>
         </motion.div>
       );
@@ -37,8 +67,8 @@ export default function TokenView({ token, animate, onDone }: { token: Token; an
     case 'sound':
       return (
         <p className="my-2 flex items-center gap-2 text-[12px] italic tracking-wide text-amber/80">
-          <AudioLines size={13} className="shrink-0 animate-pulse" />
-          {animate ? <Typewriter text={token.text} speed={24} onDone={onDone} /> : token.text}
+          <AudioLines size={13} className={`shrink-0 ${animate ? 'animate-pulse' : ''}`} />
+          {body(token.text, 24)}
         </p>
       );
 
@@ -47,7 +77,7 @@ export default function TokenView({ token, animate, onDone }: { token: Token; an
       return (
         <p className="my-1.5 pl-3 text-[11px] leading-relaxed text-muted/90">
           <Quote size={10} className="mr-1.5 inline align-middle opacity-60" />
-          {animate ? <Typewriter text={token.text} speed={26} onDone={onDone} /> : token.text}
+          {body(token.text, 26)}
         </p>
       );
 
@@ -115,7 +145,7 @@ export default function TokenView({ token, animate, onDone }: { token: Token; an
     default:
       return (
         <p className="my-2 whitespace-pre-wrap text-[13px] leading-[1.9] text-chalk/90">
-          {animate ? <Typewriter text={token.text} speed={18} onDone={onDone} /> : token.text}
+          {body(token.text, 18)}
         </p>
       );
   }
