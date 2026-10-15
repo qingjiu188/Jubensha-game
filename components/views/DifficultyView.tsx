@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, LogOut } from 'lucide-react';
 import TerminalButton from '@/components/ui/TerminalButton';
 import { useGame } from '@/store/gameStore';
 import { DIFFICULTIES } from '@/lib/mock';
@@ -12,13 +12,31 @@ export default function DifficultyView() {
   const difficulty = useGame((s) => s.difficulty);
   const chooseDifficulty = useGame((s) => s.chooseDifficulty);
   const chooseScenario = useGame((s) => s.chooseScenario);
+  const account = useGame((s) => s.account);
+  const logout = useGame((s) => s.logout);
   const list = scenariosOf(difficulty);
 
   return (
     <div className="mx-auto flex h-full w-full max-w-6xl flex-col gap-6 overflow-y-auto px-6 py-8">
       <div className="flex items-baseline justify-between">
         <h2 className="font-serif text-2xl tracking-[0.3em] text-chalk">筛 选</h2>
-        <span className="text-[10px] tracking-[0.3em] text-muted">STEP 02 / DIFFICULTY & SCENARIO</span>
+        <span className="flex items-center gap-3 text-[10px] tracking-[0.3em] text-muted">
+          {account && (
+            <>
+              <span className="border border-toxic/40 px-2 py-0.5 text-toxic">
+                No.{account.playerNo} · {account.username}
+              </span>
+              <button
+                onClick={() => void logout()}
+                className="inline-flex items-center gap-1 border border-hairline px-2 py-0.5 transition-colors hover:border-blood/70 hover:text-blood-bright"
+              >
+                <LogOut size={11} />
+                切换账号
+              </button>
+            </>
+          )}
+          STEP 02 / DIFFICULTY & SCENARIO
+        </span>
       </div>
 
       {/* 难度 */}

@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Dices, Fingerprint } from 'lucide-react';
+import { Dices, Fingerprint, LogOut } from 'lucide-react';
 import TerminalButton from '@/components/ui/TerminalButton';
 import StatBar from '@/components/ui/StatBar';
 import RankBadge from '@/components/ui/RankBadge';
@@ -21,6 +21,7 @@ export default function CharacterView() {
   const account = useGame((s) => s.account);
   const identityRemaining = useGame((s) => s.identityRemaining);
   const authError = useGame((s) => s.authError);
+  const logout = useGame((s) => s.logout);
 
   const total = useMemo(() => totalScore(player), [player]);
   const snark = useMemo(() => snarkOf(player, player.rank), [player]);
@@ -33,9 +34,18 @@ export default function CharacterView() {
         <h2 className="font-serif text-2xl tracking-[0.3em] text-chalk">建 档</h2>
         <span className="flex items-center gap-3 text-[10px] tracking-[0.3em] text-muted">
           {account && (
-            <span className="border border-toxic/40 px-2 py-0.5 text-toxic">
-              No.{account.playerNo} · {account.username}
-            </span>
+            <>
+              <span className="border border-toxic/40 px-2 py-0.5 text-toxic">
+                No.{account.playerNo} · {account.username}
+              </span>
+              <button
+                onClick={() => void logout()}
+                className="inline-flex items-center gap-1 border border-hairline px-2 py-0.5 transition-colors hover:border-blood/70 hover:text-blood-bright"
+              >
+                <LogOut size={11} />
+                切换账号
+              </button>
+            </>
           )}
           STEP 01 / CHARACTER
         </span>
