@@ -8,38 +8,27 @@ import type { Token } from '@/types';
 /**
  * 单个 Token 的渲染器。
  * 四类标签各有独立视觉：
- *   画面 -> 拍立得相框
+ *   画面 -> 左侧细竖线 + 相机角标（流式，无相框）
  *   音效 -> 声波图标 + 斜体
  *   肢体 -> 灰色小字旁白
  *   判定 -> 骰子系统框（成功绿 / 失败红）
  */
 export default function TokenView({ token, animate, onDone }: { token: Token; animate: boolean; onDone?: () => void }) {
   switch (token.kind) {
-    /* ---------- 画面：拍立得相框 ---------- */
+    /* ---------- 画面：细竖线 + 相机角标，跟正文一样流式排布 ---------- */
     case 'scene':
       return (
         <motion.div
-          initial={{ opacity: 0, rotate: -1.2, y: 8 }}
-          animate={{ opacity: 1, rotate: -0.6, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="my-3 w-[min(100%,420px)] border border-hairline bg-[#151518] p-2 shadow-[0_6px_24px_rgba(0,0,0,0.6)]"
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="my-2.5 border-l-2 border-toxic/40 pl-3"
         >
-          <div className="relative flex h-24 items-center justify-center overflow-hidden bg-gradient-to-br from-[#202024] via-[#101013] to-[#08080a]">
-            {/* 相纸颗粒 */}
-            <div
-              className="absolute inset-0 opacity-30"
-              style={{
-                backgroundImage:
-                  'repeating-linear-gradient(45deg, rgba(255,255,255,0.03) 0 2px, transparent 2px 5px)',
-              }}
-            />
-            <Camera size={22} className="relative text-chalk/25" />
-            <span className="absolute bottom-1.5 right-2 text-[9px] tracking-[0.2em] text-chalk/25">
-              FRAME
+          <p className="flex items-start gap-2 text-[12.5px] leading-[1.9] text-chalk/85">
+            <Camera size={12} className="mt-[6px] shrink-0 text-toxic/55" />
+            <span>
+              {animate ? <Typewriter text={token.text} speed={20} onDone={onDone} /> : token.text}
             </span>
-          </div>
-          <p className="px-1.5 py-2 text-[11px] leading-relaxed text-chalk/70">
-            {animate ? <Typewriter text={token.text} speed={20} onDone={onDone} /> : token.text}
           </p>
         </motion.div>
       );
