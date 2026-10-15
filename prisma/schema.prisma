@@ -16,6 +16,10 @@
 
 generator client {
   provider = "prisma-client-js"
+  /// 线上宿主是 Linux（Vercel = Amazon Linux / Debian 系），
+  /// 本地 macOS 生成客户端时必须把 Linux 查询引擎一并打进去，
+  /// 否则部署后会报 "Query engine library for current platform could not be found"。
+  binaryTargets = ["native", "debian-openssl-3.0.x", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

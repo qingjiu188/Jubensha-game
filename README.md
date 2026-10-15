@@ -171,6 +171,12 @@ npm run dev             # 重启后自动切到 MySQL（.env 的 DATABASE_URL �
 
 ## 三·五、部署到 Vercel（生成公网链接，点开就玩）
 
+> **为什么 GitHub Pages 打不开游戏？**
+> GitHub Pages 只能托管静态文件（HTML / CSS / JS），没有 Node 运行时。本项目是 Next.js 全栈应用 ——
+> 登录（Auth.js）、数据库（Prisma）、AI 代理（`/api/game/action`）全部跑在服务端接口上。
+> 用 `https://<用户名>.github.io/<仓库名>/` 打开时，GitHub 只能把仓库里的 `README.md` 渲染成说明页，
+> **不会运行游戏**。要拿到能点开就玩的公网链接，请按下面部署到 Vercel（免费）。
+
 > 线上是 serverless，没有可写磁盘，**必须配一个云数据库**；不配 `DATABASE_URL` 时写入会直接报 `SERVERLESS_NO_DATABASE`。
 
 ### 1. 申请一个免费云数据库（MySQL 兼容，零代码改动）
@@ -211,7 +217,15 @@ DATABASE_URL="mysql://...tidbcloud.com:4000/instance?sslaccept=strict" npx prism
 
 4. Deploy → 拿到 `https://xxx.vercel.app`，发给别人即可直接玩
 
-构建脚本已内置 `prisma generate`（`build` 与 `postinstall` 都会跑），Vercel 不需要额外配置。
+构建脚本已内置 `prisma generate`（`build` 与 `postinstall` 都会跑），`schema.prisma` 的 `binaryTargets`
+也已包含 Linux 引擎，Vercel 不需要额外配置。
+
+### 部署前自查（本地一条命令跑完）
+
+```bash
+npm run typecheck        # tsc --noEmit，必须 0 error
+```
+
 
 ### 4. 让朋友玩之前自己先跑一遍
 
