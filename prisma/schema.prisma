@@ -67,6 +67,14 @@ model Archive {
   /// 身份所属类别（如「通灵与神秘学类」）
   identityCategory String?
 
+  /* ---------- 玩家自定义的角色信息 ---------- */
+  /// 角色名字（玩家自己起的，与账号代号、系统身份相互独立）
+  displayName String?
+  /// 性别：male / female / other / hidden
+  gender String?
+  /// 样貌自述（纯文本，进副本时注入 AI 上下文）
+  appearance String?
+
   str Int
   int Int
   agi Int

@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FlaskConical, Lock, Send } from 'lucide-react';
+import { FlaskConical, Lock, Send, Zap } from 'lucide-react';
 import TerminalButton from '@/components/ui/TerminalButton';
 import { useGame } from '@/store/gameStore';
 import { POTION_HEAL } from '@/types';
+import { RARITY_META, type Rarity } from '@/lib/abilities';
 
 export default function ActionBar() {
   const options = useGame((s) => s.options);
@@ -16,10 +17,31 @@ export default function ActionBar() {
   const [custom, setCustom] = useState('');
   const potions = player.potions ?? { sp: 0, st: 0 };
 
+  // 异能释放：只有玩家主动点这个按钮（或自行输入）才会发动，AI 无权代放
+  const ability = player.ability ?? null;
+  const isPassive = !ability || (ability.trigger ?? '').includes('被动');
+  const abilityMeta = ability ? RARITY_META[(ability.rarity ?? 'common') as Rarity] : null;
+  const abilityTitle = ability
+    ? [
+        ability.trigger ? `触发 ${ability.trigger.replace(/[[\]]/g, '')}` : '',
+        ability.cost ? `消耗 ${ability.cost}` : '',
+        ability.cooldown ? `CD ${ability.cooldown} 回合` : '',
+        ability.effect ? `效果：${ability.effect}` : '',
+        ability.sideEffect && ability.sideEffect !== '无' ? `代价：${ability.sideEffect}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
+
   const send = async (v: string) => {
     if (busy || !v.trim()) return;
     setCustom('');
     await submit(v.trim());
+  };
+
+  const castAbility = () => {
+    if (!ability || isPassive) return;
+    void send(`发动异能【${ability.name}】`);
   };
 
   return (
@@ -65,6 +87,32 @@ export default function ActionBar() {
 
       {/* 副本内的道具栏：只有恢复剂可用，回血手段一律锁死 */}
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
+        {ability && abilityMeta && (
+          isPassive ? (
+            <span
+              title={abilityTitle}
+              className="inline-flex items-center gap-1.5 border border-hairline px-2.5 py-1 text-[10px] tracking-[0.2em] text-muted/60"
+            >
+              <Zap size={11} />
+              【{ability.name}】被动生效中
+            </span>
+          ) : (
+            <button
+              onClick={castAbility}
+              disabled={busy}
+              title={abilityTitle}
+              className="inline-flex items-center gap-1.5 border px-2.5 py-1 text-[10px] tracking-[0.2em] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              style={{
+                borderColor: `${abilityMeta.color}88`,
+                color: abilityMeta.color,
+                boxShadow: `0 0 10px ${abilityMeta.glow}`,
+              }}
+            >
+              <Zap size={11} />
+              发动异能【{ability.name}】
+            </button>
+          )
+        )}
         <button
           onClick={() => usePotion('sp')}
           disabled={busy || (potions.sp ?? 0) <= 0}

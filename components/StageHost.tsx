@@ -32,7 +32,7 @@ export default function StageHost() {
   }, [bootstrap]);
 
   return (
-    <main className="relative h-screen w-full overflow-hidden bg-void">
+    <main className="relative h-dvh w-full overflow-hidden bg-void">
       {/* 全局粒子背景（最底层，贯穿所有视图，永不卸载） */}
       <ParticleField />
 
@@ -81,7 +81,8 @@ export default function StageHost() {
               animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
               exit={{ opacity: 0, scale: 0.99, filter: 'blur(8px)' }}
               transition={{ duration: 0.42, ease: [0.4, 0, 0.2, 1] }}
-              className="h-full w-full"
+              /* 移动端内容超出时允许整页滚动（GAMEPLAY 内部自有滚动区，不受影响） */
+              className="h-full w-full overflow-y-auto overscroll-contain"
             >
               {phase === 'AUTH' && <AuthView />}
               {phase === 'LOBBY' && <LobbyView />}

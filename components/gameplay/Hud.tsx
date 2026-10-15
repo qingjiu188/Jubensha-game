@@ -36,6 +36,11 @@ export default function Hud() {
           <div className="text-right">
             <p className="text-[9px] tracking-[0.3em] text-muted">IDENTITY</p>
             <p className="text-[13px] tracking-[0.15em] text-chalk">{player.role}</p>
+            {player.sceneIdentity && (
+              <p className="text-[10px] tracking-[0.15em] text-amber/80">
+                副本身份 · {player.sceneIdentity}
+              </p>
+            )}
             <p className="text-[10px] tracking-[0.2em] text-toxic/70">
               {scenario?.title ?? '未挂载'}
             </p>

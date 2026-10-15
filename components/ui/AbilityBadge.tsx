@@ -226,6 +226,38 @@ export default function AbilityBadge({ ability, size = 'md', showDesc = true, cl
         {showDesc && (
           <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">{ability.desc}</p>
         )}
+        {/* 《副本异能.docx》机制表：触发 / 消耗 / 门槛 / CD / 效果 / 代价 */}
+        {size !== 'sm' && (ability.trigger || ability.effect) && (
+          <dl className="mt-2 space-y-1 border-t border-white/10 pt-2 text-[10px] leading-relaxed tracking-[0.08em]">
+            {ability.trigger && (
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-muted">触发</dt>
+                <dd className="text-zinc-300">{ability.trigger.replace(/[[\]]/g, '')}</dd>
+              </div>
+            )}
+            {(ability.cost || ability.cooldown !== undefined) && (
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-muted">消耗</dt>
+                <dd className="text-zinc-300">
+                  {ability.cost ?? '无'}
+                  {ability.cooldown ? ` · CD ${ability.cooldown} 回合` : ' · 无冷却'}
+                </dd>
+              </div>
+            )}
+            {ability.effect && (
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-muted">效果</dt>
+                <dd className="text-zinc-300">{ability.effect}</dd>
+              </div>
+            )}
+            {ability.sideEffect && ability.sideEffect !== '无' && (
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-blood-bright/70">代价</dt>
+                <dd className="text-blood-bright/80">{ability.sideEffect}</dd>
+              </div>
+            )}
+          </dl>
+        )}
       </div>
     </div>
   );

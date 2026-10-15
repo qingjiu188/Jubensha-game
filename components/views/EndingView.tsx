@@ -29,7 +29,7 @@ function GoodEnding({ type }: { type: 'HE' | 'NE' }) {
     : '真相：你活着出去了，但档案里多了一页写着别人名字的记录。下次进来的人会替你走完。';
 
   return (
-    <div className="flex h-full w-full items-center justify-center px-6 py-10">
+    <div className="flex min-h-full w-full items-center justify-center px-6 py-10 [justify-content:safe_center]">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -128,7 +128,7 @@ function BadEnding() {
   const cls = (f: string) => (gone(f) ? 'animate-dissolve' : 'animate-glitch-shift');
 
   return (
-    <div className="relative h-full w-full overflow-hidden">
+    <div className="relative h-full w-full overflow-y-auto overscroll-contain">
       {/* 红光闪烁 */}
       <AnimatePresence>
         {step === 'flash' && (
@@ -146,7 +146,7 @@ function BadEnding() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(139,0,0,0.35),transparent_65%)]" />
 
       {step !== 'black' && (
-        <div className="relative mx-auto flex h-full w-full max-w-3xl flex-col justify-center px-6 py-10">
+        <div className="relative mx-auto flex min-h-full w-full max-w-3xl flex-col justify-start px-6 py-10 md:justify-center">
           {/* 标题 */}
           <div className="mb-6">
             <span className="inline-flex items-center gap-2 text-[11px] tracking-[0.3em] text-blood-bright">

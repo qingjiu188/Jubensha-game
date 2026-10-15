@@ -66,7 +66,7 @@ export default function LobbyView() {
   };
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center px-6">
+    <div className="flex min-h-full w-full flex-col items-center justify-start px-6 py-10 md:justify-center">
       {/* 右上角：当前账号 */}
       <div className="absolute right-5 top-5 flex items-center gap-3">
         <span className="inline-flex items-center gap-2 text-[10px] tracking-[0.25em] text-muted">

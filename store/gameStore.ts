@@ -14,10 +14,13 @@ import type {
   Token,
 } from '@/types';
 import { STAT_BASE_MAX } from '@/types';
-import { extractKills, extractLootNames, parseNarrative } from '@/lib/parser';
+import { extractKills, extractLootNames, extractRole, parseNarrative } from '@/lib/parser';
 import { rankOf, totalScore } from '@/lib/rank';
 import { rollIdentity } from '@/lib/abilities';
-import type { IdentityEntry } from '@/lib/identities';
+import { abilityOf, IDENTITY_BY_ABILITY, type IdentityEntry } from '@/lib/identities';
+
+/** 异能名 → 身份条目（给 hydrate 补机制字段用） */
+const ABILITY_INDEX = IDENTITY_BY_ABILITY;
 import {
   POTION_PRICE,
   abilityHealsHp,
@@ -114,6 +117,8 @@ interface GameStore {
   retryBootstrap: () => void;
   /** 身份由系统分发，不再由玩家输入；此接口保留用于兼容 */
   setName: (name: string) => void;
+  /** 建档时玩家自定义的名字 / 性别 / 样貌（本地即时更新，确认建档时落库） */
+  setProfile: (patch: { name?: string; gender?: string | null; appearance?: string | null }) => void;
   /** 拉取已被占用的身份（唯一性） */
   loadTaken: () => Promise<void>;
   rollStats: () => void;
@@ -150,7 +155,10 @@ interface GameStore {
 
 const EMPTY_PLAYER: PlayerState = {
   name: '',
+  gender: null,
+  appearance: null,
   role: '未登记',
+  sceneIdentity: null,
   hp: 100,
   sp: 100,
   st: 100,
@@ -190,9 +198,17 @@ function pushLog(list: LogEntry[], role: LogEntry['role'], raw: string): LogEntr
 
 /** 数据库记录 → 前端 PlayerState */
 function hydrate(a: DbArchive): PlayerState {
+  // 异能的机制字段（触发/消耗/CD/效果/代价）不落库，
+  // 启动时按异能名从《副本异能.docx》总表里重新补齐
+  const entry = a.abilityName ? ABILITY_INDEX[a.abilityName] : undefined;
   return {
-    name: a.identity || a.username,
-    role: a.identityCategory || a.currentRole || '未登记',
+    // 角色名字优先用玩家自定义的；没填则退回系统身份
+    name: a.displayName || a.identity || a.username,
+    gender: a.gender ?? null,
+    appearance: a.appearance ?? null,
+    // 主身份 = 系统分发的身份名，决定技能；类别在 ability.category
+    role: a.identity || a.currentRole || '未登记',
+    sceneIdentity: null,
     hp: a.hp,
     sp: a.sp,
     st: a.st,
@@ -210,13 +226,15 @@ function hydrate(a: DbArchive): PlayerState {
     equippedWeaponId: typeof a.equippedWeaponId === 'string' ? a.equippedWeaponId : null,
     kills: Number(a.kills) || 0,
     ability: a.abilityName && a.abilityName !== '—'
-      ? {
-          name: a.abilityName,
-          desc: a.abilityDesc,
-          rarity: (a.abilityRarity as AbilitySnapshot['rarity']) ?? 'common',
-          bonus: `【${a.abilityName}】${a.abilityDesc ?? ''}`,
-          category: a.identityCategory ?? undefined,
-        }
+      ? entry
+        ? { ...abilityOf(entry) }
+        : {
+            name: a.abilityName,
+            desc: a.abilityDesc,
+            rarity: (a.abilityRarity as AbilitySnapshot['rarity']) ?? 'common',
+            bonus: `【${a.abilityName}】${a.abilityDesc ?? ''}`,
+            category: a.identityCategory ?? undefined,
+          }
       : null,
   };
 }
@@ -263,7 +281,8 @@ function freshRoll(taken: string[] = []): {
   const entry = rollIdentity(taken);
   return {
     stats,
-    role: entry.category,
+    // 主身份 = 系统分发的身份名（如「灵媒」），决定技能；类别归 ability.category 管
+    role: entry.identity,
     identity: entry.identity,
     entry,
   };
@@ -303,6 +322,18 @@ export const useGame = create<GameStore>((set, get) => ({
 
   setName: (name) => set((s) => ({ player: { ...s.player, name } })),
 
+  setProfile: (patch) =>
+    set((s) => ({
+      player: {
+        ...s.player,
+        ...(patch.name !== undefined ? { name: patch.name.slice(0, 20) } : {}),
+        ...(patch.gender !== undefined ? { gender: patch.gender } : {}),
+        ...(patch.appearance !== undefined
+          ? { appearance: patch.appearance ? patch.appearance.slice(0, 300) : null }
+          : {}),
+      },
+    })),
+
   /** 拉取已被占用的身份列表 */
   loadTaken: async () => {
     try {
@@ -314,23 +345,19 @@ export const useGame = create<GameStore>((set, get) => ({
     }
   },
 
-  /** 随机生成三维属性 + 分发身份（含绑定异能），并同步评级 */
+  /**
+   * 随机生成三维属性 + 分发身份（含绑定异能），并同步评级。
+   * 注意：只重掷三维/身份/异能，玩家已填的名字、性别、样貌原样保留。
+   */
   rollStats: () =>
     set((s) => {
-      const { stats, role, identity, entry } = freshRoll(s.takenIdentities);
+      const { stats, role, entry } = freshRoll(s.takenIdentities);
       return {
         player: {
           ...s.player,
           ...stats,
-          name: identity,
           role,
-          ability: {
-            name: entry.ability,
-            desc: entry.desc,
-            rarity: entry.rarity,
-            bonus: `【${entry.ability}】${entry.desc}`,
-            category: entry.category,
-          },
+          ability: { ...abilityOf(entry) },
           rank: rankOf(stats),
         },
       };
@@ -571,12 +598,15 @@ export const useGame = create<GameStore>((set, get) => ({
   /** 确认建档 → POST /api/archive 写入数据库（身份与异能终身锁定） */
   confirmCharacter: async () => {
     const st = get();
-    if (!st.player.name.trim()) return;
+    if (!st.player.role || st.player.role === '未登记') return;
     set({ submitting: true });
     try {
       const { playerNo, archive, reassigned } = await apiCreateArchive({
-        username: st.player.name.trim(),
-        identity: st.player.name.trim(),
+        username: st.player.role,
+        identity: st.player.role,
+        displayName: st.player.name.trim() || null,
+        gender: st.player.gender,
+        appearance: st.player.appearance,
         str: st.player.str,
         int: st.player.int,
         agi: st.player.agi,
@@ -586,14 +616,10 @@ export const useGame = create<GameStore>((set, get) => ({
       });
 
       // 服务端可能因占用而改派身份，一律以返回为准
-      const finalName = archive?.identity || st.player.name.trim();
-      const finalAbility = archive
-        ? {
-            ...st.player.ability,
-            name: archive.abilityName || st.player.ability?.name || '',
-            desc: archive.abilityDesc || st.player.ability?.desc || '',
-            rarity: (archive.abilityRarity as AbilitySnapshot['rarity']) ?? 'common',
-          }
+      const finalRole = archive?.identity || st.player.role;
+      const finalEntry = archive?.abilityName ? ABILITY_INDEX[archive.abilityName] : undefined;
+      const finalAbility = finalEntry
+        ? { ...abilityOf(finalEntry) }
         : st.player.ability;
 
       set({
@@ -601,12 +627,12 @@ export const useGame = create<GameStore>((set, get) => ({
         hasArchive: true,
         player: {
           ...st.player,
-          name: finalName,
-          role: archive?.identityCategory || st.player.role,
+          name: archive?.displayName || st.player.name.trim() || finalRole,
+          role: finalRole,
           ability: finalAbility,
           rank: rankOf(st.player),
         },
-        takenIdentities: [...new Set([...st.takenIdentities, finalName])],
+        takenIdentities: [...new Set([...st.takenIdentities, finalRole])],
         identityRemaining: Math.max(0, st.identityRemaining - 1),
         authError: null,
         authErrorKind: 'none',
@@ -626,7 +652,8 @@ export const useGame = create<GameStore>((set, get) => ({
 
   chooseScenario: (s) =>
     set((st) => {
-      const player = { ...st.player, clueTotal: s.clueTotal, turn: 0, clues: 0 };
+      // 进入新副本：清空上一局的临时身份，等 AI 按新背景重新分配
+      const player = { ...st.player, clueTotal: s.clueTotal, turn: 0, clues: 0, sceneIdentity: null };
       const raw = `>> 实例已挂载：${s.title}　难度：${st.difficulty.toUpperCase()}`;
       const logs: LogEntry[] = [
         { id: uid(), role: 'system', raw, tokens: [{ kind: 'text', text: raw }] },
@@ -737,6 +764,12 @@ export const useGame = create<GameStore>((set, get) => ({
     }
     if (player.weapons.length > 40) player.weapons = player.weapons.slice(-40);
 
+    /* ---- 副本内临时身份：AI 按副本背景分配，仅叙事用，不动主身份/技能 ---- */
+    const sceneRole = extractRole(result.narrative);
+    if (sceneRole && !player.sceneIdentity) {
+      player.sceneIdentity = sceneRole.slice(0, 24);
+    }
+
     /* ---- 死亡判定：HP 或 SP 归零即强制 BadEnding ---- */
     let ending = result.ending;
     let endingTitle = result.endingTitle ?? '';
@@ -843,6 +876,8 @@ export const useGame = create<GameStore>((set, get) => ({
       set({
         phase: 'LOBBY',
         scenario: null,
+        // 离开副本：临时身份随之失效，主身份与技能不变
+        player: { ...s.player, sceneIdentity: null },
         logs: [],
         destroyed: [],
         busy: false,
@@ -852,21 +887,14 @@ export const useGame = create<GameStore>((set, get) => ({
     }
 
     await get().loadTaken();
-    const { stats, role, identity, entry } = freshRoll(get().takenIdentities);
+    const { stats, role, entry } = freshRoll(get().takenIdentities);
     set({
       phase: 'CHARACTER',
       player: {
         ...EMPTY_PLAYER,
         ...stats,
-        name: identity,
         role,
-        ability: {
-          name: entry.ability,
-          desc: entry.desc,
-          rarity: entry.rarity,
-          bonus: `【${entry.ability}】${entry.desc}`,
-          category: entry.category,
-        },
+        ability: { ...abilityOf(entry) },
         rank: rankOf(stats),
       },
       scenario: null,

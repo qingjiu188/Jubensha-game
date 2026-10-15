@@ -43,6 +43,12 @@ export interface DbArchive {
   identity: string | null;
   /** 身份所属类别 */
   identityCategory: string | null;
+  /** 玩家自定义的角色名字 */
+  displayName: string | null;
+  /** 性别：male / female / other / hidden */
+  gender: string | null;
+  /** 样貌自述 */
+  appearance: string | null;
   str: number;
   int: number;
   agi: number;
@@ -182,6 +188,9 @@ function normalizeStore(raw: Partial<JsonStore>): JsonStore {
       ...a,
       identity: a.identity ?? null,
       identityCategory: a.identityCategory ?? null,
+      displayName: a.displayName ?? null,
+      gender: a.gender ?? null,
+      appearance: a.appearance ?? null,
       abilityName: a.abilityName ?? '—',
       abilityDesc: a.abilityDesc ?? '',
       abilityRarity: a.abilityRarity ?? 'common',
@@ -365,6 +374,9 @@ function mapArchive(a: any): DbArchive {
     username: a.username,
     identity: a.identity ?? null,
     identityCategory: a.identityCategory ?? null,
+    displayName: a.displayName ?? null,
+    gender: a.gender ?? null,
+    appearance: a.appearance ?? null,
     str: a.str,
     int: a.int,
     agi: a.agi,
@@ -610,6 +622,9 @@ export async function createArchive(input: ArchiveCreateInput): Promise<DbArchiv
         username: input.username,
         identity: input.identity ?? null,
         identityCategory: input.identityCategory ?? null,
+        displayName: input.displayName ?? null,
+        gender: input.gender ?? null,
+        appearance: input.appearance ?? null,
         str: input.str,
         int: input.int,
         agi: input.agi,

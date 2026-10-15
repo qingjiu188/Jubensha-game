@@ -17,6 +17,7 @@ export default function CharacterView() {
   const player = useGame((s) => s.player);
   const rollStats = useGame((s) => s.rollStats);
   const confirm = useGame((s) => s.confirmCharacter);
+  const setProfile = useGame((s) => s.setProfile);
   const submitting = useGame((s) => s.submitting);
   const account = useGame((s) => s.account);
   const identityRemaining = useGame((s) => s.identityRemaining);
@@ -25,11 +26,18 @@ export default function CharacterView() {
 
   const total = useMemo(() => totalScore(player), [player]);
   const snark = useMemo(() => snarkOf(player, player.rank), [player]);
-  // 身份由系统分发，无需玩家输入；分发完成即可确认
-  const ready = player.name.trim().length > 0;
+  // 身份分发完成即可确认；名字 / 性别 / 样貌是玩家自定义项，可不填
+  const ready = !!player.role && player.role !== '未登记';
+
+  const GENDERS: { id: string; label: string }[] = [
+    { id: 'male', label: '男' },
+    { id: 'female', label: '女' },
+    { id: 'other', label: '其他' },
+    { id: 'hidden', label: '保密' },
+  ];
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-5xl flex-col justify-center gap-6 px-6 py-8">
+    <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-start gap-6 px-6 py-8 md:justify-center">
       <div className="flex items-baseline justify-between">
         <h2 className="font-serif text-2xl tracking-[0.3em] text-chalk">建 档</h2>
         <span className="flex items-center gap-3 text-[10px] tracking-[0.3em] text-muted">
@@ -65,12 +73,67 @@ export default function CharacterView() {
             </label>
             <div className="flex items-center justify-between border border-toxic/40 bg-black/60 px-4 py-3">
               <span className="font-serif text-2xl tracking-[0.2em] text-toxic">
-                {player.name || '分发中……'}
+                {player.role !== '未登记' ? player.role : '分发中……'}
               </span>
               <span className="text-[10px] tracking-[0.2em] text-muted">
-                {player.role || '—'}
+                {player.ability ? `异能 · ${player.ability.name}` : '—'}
               </span>
             </div>
+            <p className="mt-3 text-[10px] leading-relaxed tracking-[0.12em] text-muted">
+              身份为<strong className="text-chalk/70">主身份</strong>：决定你的异能，终身锁定。
+              进入副本后系统会按副本背景另发一个临时身份，仅作角色扮演。
+            </p>
+
+            <div className="mt-4 h-px w-full bg-hairline" />
+
+            {/* 自定义形象：名字 / 性别 / 样貌（可留空，代号兜底） */}
+            <p className="mb-3 mt-4 text-[10px] tracking-[0.3em] text-muted">PROFILE / 自定义形象</p>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-[10px] tracking-[0.2em] text-muted">名字</label>
+                <input
+                  value={player.name}
+                  onChange={(e) => setProfile({ name: e.target.value })}
+                  maxLength={20}
+                  placeholder={player.role !== '未登记' ? `留空则以「${player.role}」为名` : '输入你的名字'}
+                  className="w-full border border-hairline bg-black/50 px-3 py-2 font-mono text-[13px] tracking-wider text-chalk outline-none transition-colors placeholder:text-muted/50 focus:border-toxic/60"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] tracking-[0.2em] text-muted">性别</label>
+                <div className="flex gap-2">
+                  {GENDERS.map((g) => (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => setProfile({ gender: player.gender === g.id ? null : g.id })}
+                      className={`flex-1 border px-2 py-1.5 text-[11px] tracking-[0.25em] transition-colors ${
+                        player.gender === g.id
+                          ? 'border-toxic/70 bg-toxic/10 text-toxic'
+                          : 'border-hairline text-muted hover:border-toxic/40 hover:text-chalk/80'
+                      }`}
+                    >
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 flex items-baseline justify-between text-[10px] tracking-[0.2em] text-muted">
+                  样貌自述
+                  <span className="text-muted/50">{(player.appearance ?? '').length}/300</span>
+                </label>
+                <textarea
+                  value={player.appearance ?? ''}
+                  onChange={(e) => setProfile({ appearance: e.target.value })}
+                  maxLength={300}
+                  rows={3}
+                  placeholder="例如：及肩黑发，左眼下方有颗泪痣，总穿着一件洗旧的黑夹克……"
+                  className="w-full resize-none border border-hairline bg-black/50 px-3 py-2 font-mono text-[12px] leading-relaxed tracking-wider text-chalk outline-none transition-colors placeholder:text-muted/40 focus:border-toxic/60"
+                />
+              </div>
+            </div>
+
             <div className="mt-4 h-px w-full bg-hairline" />
             <p className="mt-4 text-xs leading-relaxed text-muted">
               身份由系统分发，共 {IDENTITY_TOTAL} 个，<span className="text-amber">全局唯一</span>：
@@ -109,9 +172,21 @@ export default function CharacterView() {
               <div>
                 <p className="text-[10px] tracking-[0.3em] text-muted">DOSSIER / 档案卡</p>
                 <p className="mt-1 font-serif text-3xl tracking-[0.2em] text-chalk">
-                  {player.name || '________'}
+                  {player.name || player.role || '________'}
                 </p>
-                <p className="mt-1 text-[11px] tracking-[0.2em] text-toxic/70">{player.role}</p>
+                <p className="mt-1 text-[11px] tracking-[0.2em] text-toxic/70">
+                  {player.role}
+                  {player.gender && (
+                    <span className="ml-2 text-muted">
+                      {GENDERS.find((g) => g.id === player.gender)?.label ?? ''}
+                    </span>
+                  )}
+                </p>
+                {player.appearance && (
+                  <p className="mt-2 line-clamp-2 text-[10px] leading-relaxed tracking-[0.1em] text-muted">
+                    {player.appearance}
+                  </p>
+                )}
               </div>
               <RankBadge rank={player.rank} size="md" />
             </div>

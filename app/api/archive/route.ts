@@ -104,6 +104,18 @@ export async function POST(req: Request) {
     rarity: picked.rarity,
   };
 
+  /* ---------- 玩家自定义的角色信息（建档时写入，可后改） ---------- */
+  const genderRaw = String(body.gender ?? '').trim();
+  const gender = ['male', 'female', 'other', 'hidden'].includes(genderRaw) ? genderRaw : null;
+  const displayName =
+    String(body.displayName ?? '')
+      .trim()
+      .slice(0, 20) || null;
+  const appearance =
+    String(body.appearance ?? '')
+      .trim()
+      .slice(0, 300) || null;
+
   let archive: DbArchive;
   try {
     archive = await createArchive({
@@ -111,6 +123,9 @@ export async function POST(req: Request) {
       username,
       identity: picked.identity,
       identityCategory: picked.category,
+      displayName,
+      gender,
+      appearance,
       // 初始三维：0~100（闭区间）。超过 100 的部分只允许通过成长点累积，不能在建档时写入
       str: clamp(Number(body.str ?? 50), 0, STAT_BASE_MAX),
       int: clamp(Number(body.int ?? 50), 0, STAT_BASE_MAX),
@@ -196,6 +211,18 @@ export async function PATCH(req: Request) {
       : null;
   } else if ('equippedWeaponId' in patch && patch.equippedWeaponId !== null) {
     patch.equippedWeaponId = null;
+  }
+
+  // 玩家自定义的角色信息：长度消毒 + 性别白名单
+  if ('displayName' in patch) {
+    patch.displayName = String(patch.displayName ?? '').trim().slice(0, 20) || null;
+  }
+  if ('gender' in patch) {
+    const g = String(patch.gender ?? '').trim();
+    patch.gender = ['male', 'female', 'other', 'hidden'].includes(g) ? g : null;
+  }
+  if ('appearance' in patch) {
+    patch.appearance = String(patch.appearance ?? '').trim().slice(0, 300) || null;
   }
 
   const archive = await updateArchive(userId, patch);

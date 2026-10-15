@@ -113,6 +113,37 @@ export default function TokenView({
       );
     }
 
+    /* ---------- 对白：NPC 气泡 ---------- */
+    case 'dialog':
+      return (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="my-2.5 max-w-[85%] border-l-2 border-amber/50 bg-amber/[0.05] px-3 py-2"
+        >
+          <p className="text-[10px] tracking-[0.25em] text-amber/80">
+            {token.speaker}
+          </p>
+          <p className="mt-1 text-[12.5px] leading-[1.85] text-chalk/90">
+            {body(token.text, 22)}
+          </p>
+        </motion.div>
+      );
+
+    /* ---------- 临时身份：副本内系统分配 ---------- */
+    case 'role':
+      return (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="my-2 inline-flex items-center gap-2 border border-toxic/30 bg-toxic/[0.04] px-2.5 py-1"
+        >
+          <span className="text-[9px] tracking-[0.3em] text-toxic/60">副本身份</span>
+          <span className="text-[11px] tracking-[0.15em] text-toxic/90">{token.text}</span>
+        </motion.div>
+      );
+
     /* ---------- 击杀：宿主已清除 ---------- */
     case 'kill':
       return (

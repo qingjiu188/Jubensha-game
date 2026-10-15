@@ -11,9 +11,9 @@ import type { Token } from '@/types';
 /** 流式打字速度：每字毫秒（越小越快） */
 const CHAR_MS = 14;
 
-/** 只有这几类 token 参与逐字输出；判定/击杀/掉落是整块闪现 */
+/** 只有这几类 token 参与逐字输出；判定/击杀/掉落/临时身份是整块闪现 */
 function streamLen(t: Token): number {
-  return t.kind === 'text' || t.kind === 'scene' || t.kind === 'sound' || t.kind === 'action'
+  return t.kind === 'text' || t.kind === 'scene' || t.kind === 'sound' || t.kind === 'action' || t.kind === 'dialog'
     ? t.text.length
     : 0;
 }
@@ -105,7 +105,7 @@ export default function GameplayView() {
       <div
         ref={scrollRef}
         onClick={() => typing && setSkipped(true)}
-        className="relative flex-1 overflow-y-auto px-5 py-6"
+        className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-6"
       >
         <div className="mx-auto max-w-3xl">
           {logs.map((log, li) => {

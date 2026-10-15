@@ -33,6 +33,16 @@ export interface AbilitySnapshot {
   bonus?: string;
   /** 身份所属类别，如「通灵与神秘学类」 */
   category?: string;
+  /** 触发方式：主动 / 主动开关 / 被动常驻 / 被动触发 / 交互触发 */
+  trigger?: string;
+  /** 消耗与门槛，如「20SP | 门槛25SP」 */
+  cost?: string;
+  /** 冷却回合数 */
+  cooldown?: number;
+  /** 核心效果 */
+  effect?: string;
+  /** 副作用 / 代价 */
+  sideEffect?: string;
 }
 
 /** 结局类型 */
@@ -66,9 +76,16 @@ export interface PlayerVitals {
 
 /** 玩家档案（也是发给后端的最小状态快照） */
 export interface PlayerState extends PlayerVitals, PlayerStats {
+  /** 角色名字（玩家自定义） */
   name: string;
-  /** 当前身份标签，如「见习调查员」 */
+  /** 性别：male / female / other / hidden / null */
+  gender: string | null;
+  /** 样貌自述 */
+  appearance: string | null;
+  /** 主身份（主页选择/系统分发，决定技能），如「灵媒」 */
   role: string;
+  /** 副本内身份：AI 按副本背景生成的临时身份，仅叙事用 */
+  sceneIdentity: string | null;
   /** 评级 F~SSS */
   rank: Rank;
   /** 已收集线索数 */
@@ -175,6 +192,10 @@ export interface LogEntry {
 
 export type Token =
   | { kind: 'text'; text: string }
+  /** NPC 对白：正文标签【对白：名字】内容 */
+  | { kind: 'dialog'; speaker: string; text: string }
+  /** 副本内临时身份：正文标签【临时身份：xxx】 */
+  | { kind: 'role'; text: string }
   | { kind: 'scene'; text: string }
   | { kind: 'sound'; text: string }
   | { kind: 'action'; text: string }

@@ -10,11 +10,13 @@ import type { Token } from '@/types';
  *   【判定：xxx | d20=n】 -> 骰子系统提示框（成功绿 / 失败红）
  *   【击杀：xxx】      -> 击杀提示（计入击杀数与积分）
  *   【掉落：xxx】      -> 掉落提示（武器入库）
+ *   【对白：名字】xxx  -> NPC 对白气泡
+ *   【临时身份：xxx】  -> AI 为副本生成的临时身份（仅叙事）
  *
  * 未匹配标签的普通正文按段落切分为 text token。
  * ========================================================= */
 
-const TAG_RE = /【\s*(画面|音效|肢体|判定|击杀|掉落)\s*[:：]?([\s\S]*?)\s*】/g;
+const TAG_RE = /【\s*(画面|音效|肢体|判定|击杀|掉落|对白|临时身份)\s*[:：]?([\s\S]*?)\s*】/g;
 
 /** 从判定标签正文中提取骰值与成败 */
 function parseCheck(body: string) {
@@ -61,7 +63,7 @@ export function parseNarrative(raw: string): Token[] {
     const before = raw.slice(lastIndex, m.index);
     pushText(tokens, before);
 
-    const tag = m[1] as '画面' | '音效' | '肢体' | '判定' | '击杀' | '掉落';
+    const tag = m[1] as '画面' | '音效' | '肢体' | '判定' | '击杀' | '掉落' | '对白' | '临时身份';
     const body = m[2];
 
     if (tag === '画面') tokens.push({ kind: 'scene', text: body });
@@ -69,6 +71,14 @@ export function parseNarrative(raw: string): Token[] {
     else if (tag === '肢体') tokens.push({ kind: 'action', text: body });
     else if (tag === '击杀') tokens.push({ kind: 'kill', text: body });
     else if (tag === '掉落') tokens.push({ kind: 'loot', text: body });
+    else if (tag === '对白') {
+      // 格式：【对白：名字 | 说的话】
+      const i = body.indexOf('|');
+      const speaker = (i >= 0 ? body.slice(0, i) : '？？').trim() || '？？';
+      const text = (i >= 0 ? body.slice(i + 1) : body).trim();
+      tokens.push({ kind: 'dialog', speaker, text });
+    }
+    else if (tag === '临时身份') tokens.push({ kind: 'role', text: body });
     else tokens.push({ kind: 'check', ...parseCheck(body), text: body });
 
     lastIndex = m.index + m[0].length;
@@ -112,4 +122,10 @@ export function extractLootNames(raw: string): string[] {
   return [...raw.matchAll(/【\s*掉落\s*[:：]?\s*([\s\S]*?)\s*】/g)]
     .map((m) => m[1]?.trim())
     .filter((s): s is string => !!s);
+}
+
+/** 副本内 AI 分配的临时身份（只取第一个，后续回合不应重复分配） */
+export function extractRole(raw: string): string | null {
+  const m = /【\s*临时身份\s*[:：]?\s*([\s\S]*?)\s*】/.exec(raw);
+  return m?.[1]?.trim() || null;
 }

@@ -26,6 +26,12 @@ export async function createArchive(input: {
   username: string;
   /** 身份（全局唯一，服务端会校验占用情况并可能改派） */
   identity: string;
+  /** 玩家自定义的角色名字 */
+  displayName?: string | null;
+  /** 性别：male / female / other / hidden */
+  gender?: string | null;
+  /** 样貌自述 */
+  appearance?: string | null;
   str: number;
   int: number;
   agi: number;
