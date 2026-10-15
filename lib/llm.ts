@@ -25,6 +25,21 @@ B. 动作
 C. 动作
 5. 只输出正文与选项，不要解释你的推理。`;
 
+/**
+ * 组装 System Prompt：把玩家异能的判定规则注入进去，
+ * 让异能真正影响 gameplay（LLM 会自动在判定里计入加成），
+ * 而不是界面的一个摆设。
+ */
+function buildSystemPrompt(payload: SendActionPayload): string {
+  const ab = payload.playerState?.ability;
+  if (!ab?.bonus) return SYSTEM_PROMPT;
+
+  return `${SYSTEM_PROMPT}
+6. 本局玩家拥有异能，你必须在相关情境中严格执行它的效果，并在判定行中体现加成（例如写成「判定：智力 | d20=11 + 7 + 3(${ab.name}) = 21 | DC 16 | 成功」）：
+${ab.bonus}
+异能触发时，用一句话客观描写它生效的样子，不要解释机制。`;
+}
+
 export async function generateTurn(payload: SendActionPayload): Promise<SendActionResult> {
   if (process.env.LLM_API_KEY) return realLLM(payload);
   return mockLLM(payload);
@@ -63,7 +78,7 @@ async function realLLM(payload: SendActionPayload): Promise<SendActionResult> {
       model: MODEL,
       temperature: 0.9,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: buildSystemPrompt(payload) },
         { role: 'user', content: userMsg },
       ],
     }),

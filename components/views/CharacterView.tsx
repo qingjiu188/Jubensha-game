@@ -6,6 +6,7 @@ import { Dices, Fingerprint } from 'lucide-react';
 import TerminalButton from '@/components/ui/TerminalButton';
 import StatBar from '@/components/ui/StatBar';
 import RankBadge from '@/components/ui/RankBadge';
+import AbilityBadge from '@/components/ui/AbilityBadge';
 import RadarChart from '@/components/ui/RadarChart';
 import Typewriter from '@/components/ui/Typewriter';
 import { useGame } from '@/store/gameStore';
@@ -17,6 +18,7 @@ export default function CharacterView() {
   const rollStats = useGame((s) => s.rollStats);
   const confirm = useGame((s) => s.confirmCharacter);
   const submitting = useGame((s) => s.submitting);
+  const account = useGame((s) => s.account);
 
   const total = useMemo(() => totalScore(player), [player]);
   const snark = useMemo(() => snarkOf(player, player.rank), [player]);
@@ -26,7 +28,14 @@ export default function CharacterView() {
     <div className="mx-auto flex h-full w-full max-w-5xl flex-col justify-center gap-6 px-6 py-8">
       <div className="flex items-baseline justify-between">
         <h2 className="font-serif text-2xl tracking-[0.3em] text-chalk">建 档</h2>
-        <span className="text-[10px] tracking-[0.3em] text-muted">STEP 01 / CHARACTER</span>
+        <span className="flex items-center gap-3 text-[10px] tracking-[0.3em] text-muted">
+          {account && (
+            <span className="border border-toxic/40 px-2 py-0.5 text-toxic">
+              No.{account.playerNo} · {account.username}
+            </span>
+          )}
+          STEP 01 / CHARACTER
+        </span>
       </div>
 
       <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
@@ -62,7 +71,7 @@ export default function CharacterView() {
               className="group flex items-center gap-2 border border-hairline px-3 py-2 text-xs tracking-widest text-muted transition-colors hover:border-amber/60 hover:text-amber"
             >
               <Dices size={14} className="transition-transform group-hover:rotate-180" />
-              重新评级
+              重新掷点（含异能）
             </button>
             <span className="flex items-center gap-2 text-[10px] tracking-[0.2em] text-muted">
               <Fingerprint size={13} className="text-toxic/60" />
@@ -115,6 +124,17 @@ export default function CharacterView() {
                   <span className="font-serif text-2xl text-amber">{total}</span>
                 </div>
               </div>
+            </div>
+
+            {/* 随机异能 */}
+            <div className="mt-6 border-t border-hairline pt-5">
+              <div className="mb-2.5 flex items-center justify-between">
+                <span className="text-[10px] tracking-[0.3em] text-muted">ABILITY / 随机异能</span>
+                <span className="text-[10px] tracking-[0.2em] text-blood-bright/70">
+                  终身锁定 · 不可更改
+                </span>
+              </div>
+              <AbilityBadge ability={player.ability} size="md" />
             </div>
           </div>
         </motion.div>

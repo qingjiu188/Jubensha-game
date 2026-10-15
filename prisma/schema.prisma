@@ -2,12 +2,16 @@
 // 《副本 / INSTANCE》数据库模型
 // 数据库：MySQL 8+ / 9.x（Prisma ORM）
 // -------------------------------------------------------------
-// 设计要点：
-//  1. User 与 Archive 一对一。一个账号同时只能存在一份档案。
-//  2. Archive.status = 'alive' | 'dead'，死亡即整条记录被物理删除。
-//  3. currentClues 用 Json 存已收集线索 ID 数组，避免建中间表。
-//  4. 当前副本进度（难度 / 剧本 / 身份 / 回合）也落在 Archive 上，
-//     玩家刷新页面后可从数据库原样恢复。
+// 核心设计：账号层 与 角色层 解耦
+//   · User（账号）：档案代号 + 接入密钥 + 全局编号 playerNo
+//     承载论坛帖子、评论、点赞、收藏、好友关系。
+//   · Archive（角色档案）：三维 / 生存值 / 异能 / 线索 / 副本进度。
+//     死亡时**只物理删除 Archive**，User 及其社区资产完整保留。
+//     重建档案时 playerNo 递增 → 玩家获得新的 No.X 编号。
+//
+// MySQL 说明：
+//   · 原生不支持标量数组，Post.tags 用 Json 存 string[]（API 层转数组）。
+//   · 切 PostgreSQL：把 provider 改成 "postgresql" 并把 tags 改成 String[]。
 // =============================================================
 
 generator client {
@@ -19,51 +23,139 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/* ---------------- 账号层：死亡不清零 ---------------- */
+
 model User {
-  id        String    @id @default(cuid())
-  email     String    @unique
-  password  String
-  archive   Archive?
-  createdAt DateTime  @default(now())
+  id           String   @id @default(cuid())
+  /// 档案代号：仅英文数字，全局唯一
+  username     String   @unique
+  /// 接入密钥的 bcrypt 哈希
+  keyHash      String
+  /// 全局自增玩家编号（No.1 / No.2 …），每次重建档案递增
+  playerNo     Int      @unique
+  /// 当前存活档案 ID（死亡删除后置 null）
+  currentArchiveId String?
+  /// 第几代档案：0=尚未建档，1=首次，2=死亡后重建…（>1 时递增 playerNo）
+  archiveGen   Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  archive      Archive?  @relation("CurrentArchive")
+  posts        Post[]
+  comments     Comment[]
+  likes        Like[]
+  favorites    Favorite[]
+  friendships1 Friendship[] @relation("User1")
+  friendships2 Friendship[] @relation("User2")
 }
+
+/* ---------------- 角色层：死亡即物理删除 ---------------- */
 
 model Archive {
   id     String @id @default(cuid())
   userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation("CurrentArchive", fields: [userId], references: [id], onDelete: Cascade)
 
-  /** 档案代号（用户名） */
+  /// 角色代号（可不同于账号代号）
   username String
 
-  /** 三维属性：终身锁定，仅成长点可提升 */
-  str      Int
-  int      Int
-  agi      Int
+  str Int
+  int Int
+  agi Int
 
-  /** 生存数值 */
   hp Int @default(100)
   sp Int @default(100)
   st Int @default(100)
 
-  /** 评级徽章 F~SSS */
-  rating       String @default("F")
-  /** 成长点：通关奖励，可兑换属性 */
+  rating       String
   growthPoints Int    @default(0)
 
-  /** alive / dead */
-  status String @default("alive")
+  /* ---------- 随机异能：建档时随机，终身锁定 ---------- */
+  abilityName   String
+  abilityDesc   String
+  abilityRarity String
 
-  /** 已收集线索 ID 数组（Json） */
+  status       String @default("alive")
   currentClues Json?
 
   /* ---------- 当前副本进度（刷新可恢复） ---------- */
   difficulty   String?
   scenarioId   String?
   scenarioName String?
-  /** 本局随机分配到的潜入身份 */
   currentRole  String?
   turn         Int     @default(0)
 
-  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/* ---------------- 社区论坛 ---------------- */
+
+model Post {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title   String
+  content String
+  /// 标签数组（MySQL 下以 Json 存储：["求助","剧透警告"]）
+  tags    Json?
+
+  /// 转发：指向原帖
+  repostOfId String?
+
+  likes     Like[]
+  favorites Favorite[]
+  comments  Comment[]
+
+  createdAt DateTime @default(now())
+}
+
+model Comment {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId  String
+  post    Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  content String
+  /// 楼中楼：父评论 ID
+  parentId String?
+
+  createdAt DateTime @default(now())
+}
+
+model Like {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+}
+
+model Favorite {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+}
+
+/* ---------------- 好友关系 ---------------- */
+
+model Friendship {
+  id      String @id @default(cuid())
+  user1Id String
+  user1   User   @relation("User1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2Id String
+  user2   User   @relation("User2", fields: [user2Id], references: [id], onDelete: Cascade)
+
+  /// pending / accepted
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+
+  @@unique([user1Id, user2Id])
 }

@@ -2,16 +2,17 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, Play, ScrollText, User } from 'lucide-react';
+import { LogOut, MessagesSquare, Play, Radio, ScrollText, User } from 'lucide-react';
 import GlitchText from '@/components/ui/GlitchText';
 import TerminalButton from '@/components/ui/TerminalButton';
 import { useGame } from '@/store/gameStore';
 
 const RULES = [
   '每次只推进一个回合。你输入什么，系统就裁定什么。',
-  'HP 归零即档案销毁：用户名、三维、成长点、线索、存档全部清除。',
+  'HP 归零即档案销毁：角色代号、三维、异能、线索、存档全部清除。',
+  '账号与你在论坛、频道留下的一切不受死亡影响。',
   'SP 低于 30 时，你看到的描述开始不可靠；但真实线索不会因此改变。',
-  '判定公式：d20 + ⌊属性/10⌋ + 情境修正 ≥ 目标值。',
+  '判定公式：d20 + ⌊属性/10⌋ + 情境修正（含异能加成）≥ 目标值。',
   '你可以随时放弃本局，但放弃同样会被记录。',
 ];
 
@@ -19,7 +20,7 @@ export default function LobbyView() {
   const go = useGame((s) => s.go);
   const rollStats = useGame((s) => s.rollStats);
   const hasArchive = useGame((s) => s.hasArchive);
-  const userEmail = useGame((s) => s.userEmail);
+  const account = useGame((s) => s.account);
   const logout = useGame((s) => s.logout);
   const [rules, setRules] = useState(false);
 
@@ -34,11 +35,20 @@ export default function LobbyView() {
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center px-6">
-      {/* 右上角：当前登录用户 */}
+      {/* 右上角：当前账号 */}
       <div className="absolute right-5 top-5 flex items-center gap-3">
         <span className="inline-flex items-center gap-2 text-[10px] tracking-[0.25em] text-muted">
           <User size={12} className="text-toxic/70" />
-          {userEmail ?? '未登录'}
+          {account ? (
+            <>
+              <span className="text-chalk/80">{account.username}</span>
+              <span className="border border-toxic/40 px-1.5 py-0.5 text-toxic">
+                No.{account.playerNo}
+              </span>
+            </>
+          ) : (
+            '未登录'
+          )}
         </span>
         <button
           onClick={() => void logout()}
@@ -82,12 +92,40 @@ export default function LobbyView() {
           </TerminalButton>
         </motion.div>
 
+        <div className="grid grid-cols-2 gap-3">
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.33, duration: 0.45 }}
+          >
+            <TerminalButton prefix="[2]" onClick={() => go('COMMUNITY')} variant="ghost">
+              <span className="inline-flex items-center gap-2">
+                <MessagesSquare size={13} className="opacity-60" />
+                暗网论坛
+              </span>
+            </TerminalButton>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, x: 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.33, duration: 0.45 }}
+          >
+            <TerminalButton prefix="[3]" onClick={() => go('SOCIAL')} variant="ghost">
+              <span className="inline-flex items-center gap-2">
+                <Radio size={13} className="opacity-60" />
+                幸存者频道
+              </span>
+            </TerminalButton>
+          </motion.div>
+        </div>
+
         <motion.div
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.37, duration: 0.45 }}
+          transition={{ delay: 0.41, duration: 0.45 }}
         >
-          <TerminalButton prefix="[2]" onClick={() => setRules((v) => !v)} variant="ghost">
+          <TerminalButton prefix="[4]" onClick={() => setRules((v) => !v)} variant="ghost">
             <span className="inline-flex items-center gap-3">
               <ScrollText size={14} className="opacity-60" />
               规则说明

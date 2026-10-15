@@ -2,13 +2,33 @@
  * 《副本 / INSTANCE》全局类型定义
  * ========================================================= */
 
-/** 状态机的六个阶段（AUTH 为登录/注册首屏） */
-export type Phase = 'AUTH' | 'LOBBY' | 'CHARACTER' | 'DIFFICULTY' | 'GAMEPLAY' | 'ENDING';
+/** 状态机的阶段（AUTH 为接入首屏，COMMUNITY/SOCIAL 为账号层功能） */
+export type Phase =
+  | 'AUTH'
+  | 'LOBBY'
+  | 'CHARACTER'
+  | 'DIFFICULTY'
+  | 'GAMEPLAY'
+  | 'ENDING'
+  | 'COMMUNITY'
+  | 'SOCIAL';
 
 /** 登录态 */
 export interface SessionUser {
   id: string;
-  email: string;
+  /** 档案代号 */
+  username: string;
+  /** 全局编号 No.X */
+  playerNo: number;
+}
+
+/** 异能（存档快照） */
+export interface AbilitySnapshot {
+  name: string;
+  desc: string;
+  rarity: 'common' | 'rare' | 'epic' | 'legendary';
+  /** 注入 LLM 的判定规则 */
+  bonus?: string;
 }
 
 /** 结局类型 */
@@ -47,6 +67,8 @@ export interface PlayerState extends PlayerVitals, PlayerStats {
   clueTotal: number;
   /** 当前回合 */
   turn: number;
+  /** 随机异能：终身锁定，死亡后重新随机 */
+  ability?: AbilitySnapshot | null;
 }
 
 export type Rank = 'F' | 'D' | 'C' | 'B' | 'A' | 'S' | 'SS' | 'SSS';

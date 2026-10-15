@@ -10,6 +10,10 @@
  *   - 与 MySQL 行为完全一致的 CRUD，用于无数据库环境跑通全流程
  *
  * 上层（API Route）只调用本文件导出的函数，不感知底层是哪种模式。
+ *
+ * ★ 账号层 vs 角色层
+ *   User     —— 死亡不清零（论坛、好友、编号都挂在这里）
+ *   Archive  —— 死亡即物理删除
  * ========================================================= */
 
 import { promises as fs } from 'node:fs';
@@ -21,8 +25,12 @@ import { randomUUID } from 'node:crypto';
 
 export interface DbUser {
   id: string;
-  email: string;
-  password: string;
+  username: string;
+  keyHash: string;
+  playerNo: number;
+  currentArchiveId: string | null;
+  /** 第几代档案：0=未建档，1=首次，2+=死亡后重建 */
+  archiveGen: number;
   createdAt: string;
 }
 
@@ -38,6 +46,9 @@ export interface DbArchive {
   st: number;
   rating: string;
   growthPoints: number;
+  abilityName: string;
+  abilityDesc: string;
+  abilityRarity: string;
   status: 'alive' | 'dead';
   currentClues: string[];
   difficulty: string | null;
@@ -45,12 +56,68 @@ export interface DbArchive {
   scenarioName: string | null;
   currentRole: string | null;
   turn: number;
-  createdAt: string;
   updatedAt: string;
 }
 
-export type ArchiveCreateInput = Omit<DbArchive, 'id' | 'createdAt' | 'updatedAt'>;
-export type ArchivePatch = Partial<Omit<DbArchive, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>;
+export type ArchiveCreateInput = Omit<DbArchive, 'id' | 'updatedAt'>;
+export type ArchivePatch = Partial<Omit<DbArchive, 'id' | 'userId' | 'updatedAt'>>;
+
+export interface DbPost {
+  id: string;
+  userId: string;
+  title: string;
+  content: string;
+  tags: string[];
+  repostOfId: string | null;
+  createdAt: string;
+}
+
+export interface DbComment {
+  id: string;
+  userId: string;
+  postId: string;
+  content: string;
+  parentId: string | null;
+  createdAt: string;
+}
+
+export interface DbFriendship {
+  id: string;
+  user1Id: string;
+  user2Id: string;
+  status: 'pending' | 'accepted';
+  createdAt: string;
+}
+
+/** 列表项：帖子 + 作者信息 + 计数 + 当前用户态 */
+export interface PostListItem extends DbPost {
+  author: { id: string; username: string; playerNo: number };
+  likeCount: number;
+  commentCount: number;
+  favoriteCount: number;
+  liked: boolean;
+  favorited: boolean;
+  repostOf: { id: string; title: string; author: string } | null;
+}
+
+/** 评论树节点（楼中楼） */
+export interface CommentNode extends DbComment {
+  author: { id: string; username: string; playerNo: number };
+  children: CommentNode[];
+}
+
+/** 好友列表项 */
+export interface FriendItem {
+  friendshipId: string;
+  user: { id: string; username: string; playerNo: number };
+  status: 'pending' | 'accepted';
+  direction: 'incoming' | 'outgoing';
+  createdAt: string;
+  /** 对方当前角色状态 */
+  archiveStatus: 'alive' | 'dead' | 'none';
+  archiveName: string | null;
+  rating: string | null;
+}
 
 /* ---------------- JSON 文件存储 ---------------- */
 
@@ -60,23 +127,78 @@ const DATA_FILE = path.join(DATA_DIR, 'db.json');
 interface JsonStore {
   users: DbUser[];
   archives: DbArchive[];
+  posts: DbPost[];
+  comments: DbComment[];
+  likes: { id: string; userId: string; postId: string }[];
+  favorites: { id: string; userId: string; postId: string }[];
+  friendships: DbFriendship[];
 }
 
-let cache: JsonStore | null = null;
+const EMPTY: JsonStore = {
+  users: [],
+  archives: [],
+  posts: [],
+  comments: [],
+  likes: [],
+  favorites: [],
+  friendships: [],
+};
 
+/** 兼容旧版 JSON 数据（缺字段的记录会被补默认值或直接丢弃） */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeStore(raw: Partial<JsonStore>): JsonStore {
+  const users = (raw.users ?? [])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .filter((u: any) => typeof u?.username === 'string' && u.username.length > 0)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((u: any) => ({
+      ...u,
+      playerNo: Number(u.playerNo) || 0,
+      archiveGen: Number(u.archiveGen) || 0,
+      currentArchiveId: u.currentArchiveId ?? null,
+    })) as DbUser[];
+
+  const userIds = new Set(users.map((u) => u.id));
+
+  return {
+    users,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    archives: ((raw.archives ?? []) as any[]).filter((a) => userIds.has(a.userId)).map((a) => ({
+      ...a,
+      abilityName: a.abilityName ?? '—',
+      abilityDesc: a.abilityDesc ?? '',
+      abilityRarity: a.abilityRarity ?? 'common',
+      currentClues: Array.isArray(a.currentClues) ? a.currentClues : [],
+    })) as DbArchive[],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    posts: ((raw.posts ?? []) as any[]).map((p) => ({
+      ...p,
+      tags: Array.isArray(p.tags) ? p.tags : [],
+      repostOfId: p.repostOfId ?? null,
+    })) as DbPost[],
+    comments: (raw.comments ?? []) as DbComment[],
+    likes: (raw.likes ?? []) as JsonStore['likes'],
+    favorites: (raw.favorites ?? []) as JsonStore['favorites'],
+    friendships: (raw.friendships ?? []) as DbFriendship[],
+  };
+}
+
+/**
+ * 每次都读文件，不做内存缓存。
+ * 原因：Next 的服务端 bundle 可能让 lib/db 出现多个模块实例，
+ * 进程内缓存会导致「A 实例写入、B 实例读不到」的脏读（注册后立刻登录失败）。
+ * JSON 文件很小，每次读的开销可以忽略。
+ */
 async function readStore(): Promise<JsonStore> {
-  if (cache) return cache;
   try {
     const raw = await fs.readFile(DATA_FILE, 'utf8');
-    cache = JSON.parse(raw) as JsonStore;
+    return normalizeStore(JSON.parse(raw) as Partial<JsonStore>);
   } catch {
-    cache = { users: [], archives: [] };
+    return { ...EMPTY };
   }
-  return cache;
 }
 
 async function writeStore(next: JsonStore): Promise<void> {
-  cache = next;
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(DATA_FILE, JSON.stringify(next, null, 2), 'utf8');
 }
@@ -137,9 +259,7 @@ async function getPrisma(): Promise<any> {
     // webpackIgnore：让打包器不要静态解析 Prisma 内部路径，
     // 这样即使 Prisma Client 未生成，也不会导致构建失败。
     const mod = (await import(/* webpackIgnore: true */ '@prisma/client')) as unknown as {
-      PrismaClient?: new () => {
-        $queryRawUnsafe: (q: string) => Promise<unknown>;
-      };
+      PrismaClient?: new () => { $queryRawUnsafe: (q: string) => Promise<unknown> };
       default?: { PrismaClient?: new () => { $queryRawUnsafe: (q: string) => Promise<unknown> } };
     };
     const PrismaCtor = mod.PrismaClient ?? mod.default?.PrismaClient;
@@ -158,12 +278,28 @@ async function getPrisma(): Promise<any> {
   }
 }
 
-/** 当前生效的存储模式（给 API 返回，便于调试） */
+/** 当前生效的存储模式 */
 export async function storageMode(): Promise<'mysql' | 'json'> {
   return (await getPrisma()) ? 'mysql' : 'json';
 }
 
-/* ---------------- Prisma 行 → 统一结构 ---------------- */
+/* ---------------- 行映射 ---------------- */
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const iso = (v: any) => (v instanceof Date ? v.toISOString() : String(v ?? ''));
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapUser(u: any): DbUser {
+  return {
+    id: u.id,
+    username: u.username,
+    keyHash: u.keyHash,
+    playerNo: Number(u.playerNo) || 0,
+    currentArchiveId: u.currentArchiveId ?? null,
+    archiveGen: Number(u.archiveGen) || 0,
+    createdAt: iso(u.createdAt),
+  };
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapArchive(a: any): DbArchive {
@@ -179,6 +315,9 @@ function mapArchive(a: any): DbArchive {
     st: a.st,
     rating: a.rating,
     growthPoints: a.growthPoints,
+    abilityName: a.abilityName ?? '—',
+    abilityDesc: a.abilityDesc ?? '',
+    abilityRarity: a.abilityRarity ?? 'common',
     status: a.status === 'dead' ? 'dead' : 'alive',
     currentClues: Array.isArray(a.currentClues) ? (a.currentClues as string[]) : [],
     difficulty: a.difficulty ?? null,
@@ -186,51 +325,180 @@ function mapArchive(a: any): DbArchive {
     scenarioName: a.scenarioName ?? null,
     currentRole: a.currentRole ?? null,
     turn: a.turn ?? 0,
-    createdAt: a.createdAt instanceof Date ? a.createdAt.toISOString() : String(a.createdAt),
-    updatedAt: a.updatedAt instanceof Date ? a.updatedAt.toISOString() : String(a.updatedAt),
+    updatedAt: iso(a.updatedAt),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapPost(p: any): DbPost {
+  return {
+    id: p.id,
+    userId: p.userId,
+    title: p.title,
+    content: p.content,
+    tags: Array.isArray(p.tags) ? (p.tags as string[]) : [],
+    repostOfId: p.repostOfId ?? null,
+    createdAt: iso(p.createdAt),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapComment(c: any): DbComment {
+  return {
+    id: c.id,
+    userId: c.userId,
+    postId: c.postId,
+    content: c.content,
+    parentId: c.parentId ?? null,
+    createdAt: iso(c.createdAt),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapFriendship(f: any): DbFriendship {
+  return {
+    id: f.id,
+    user1Id: f.user1Id,
+    user2Id: f.user2Id,
+    status: f.status === 'accepted' ? 'accepted' : 'pending',
+    createdAt: iso(f.createdAt),
   };
 }
 
 /* =========================================================
- * User
+ * User —— 账号层
  * ========================================================= */
 
-export async function findUserByEmail(email: string): Promise<DbUser | null> {
-  const key = email.trim().toLowerCase();
+export async function findUserByUsername(username: string): Promise<DbUser | null> {
+  const key = username.trim();
   const p = await getPrisma();
   if (p) {
-    const u = await p.user.findUnique({ where: { email: key } });
-    return u ? { id: u.id, email: u.email, password: u.password, createdAt: u.createdAt.toISOString() } : null;
+    const u = await p.user.findUnique({ where: { username: key } });
+    return u ? mapUser(u) : null;
   }
   const store = await readStore();
-  return store.users.find((u) => u.email === key) ?? null;
+  return store.users.find((u) => u.username === key) ?? null;
 }
 
 export async function findUserById(id: string): Promise<DbUser | null> {
   const p = await getPrisma();
   if (p) {
     const u = await p.user.findUnique({ where: { id } });
-    return u ? { id: u.id, email: u.email, password: u.password, createdAt: u.createdAt.toISOString() } : null;
+    return u ? mapUser(u) : null;
   }
   const store = await readStore();
   return store.users.find((u) => u.id === id) ?? null;
 }
 
-export async function createUser(email: string, passwordHash: string): Promise<DbUser> {
-  const key = email.trim().toLowerCase();
+/** 按「档案代号」或「No.X」查找账号 */
+export async function findUserByHandle(handle: string): Promise<DbUser | null> {
+  const raw = handle.trim();
+  const noMatch = /^(?:no\.?)?(\d+)$/i.exec(raw);
+  if (noMatch) {
+    const no = Number(noMatch[1]);
+    const p = await getPrisma();
+    if (p) {
+      const u = await p.user.findUnique({ where: { playerNo: no } });
+      return u ? mapUser(u) : null;
+    }
+    const store = await readStore();
+    return store.users.find((u) => u.playerNo === no) ?? null;
+  }
+  return findUserByUsername(raw);
+}
+
+/** 新建账号：playerNo 取当前全局最大值 + 1 */
+export async function createUser(username: string, keyHash: string): Promise<DbUser> {
+  const key = username.trim();
   const p = await getPrisma();
   if (p) {
-    const u = await p.user.create({ data: { email: key, password: passwordHash } });
-    return { id: u.id, email: u.email, password: u.password, createdAt: u.createdAt.toISOString() };
+    const top = await p.user.findFirst({ orderBy: { playerNo: 'desc' }, select: { playerNo: true } });
+    const u = await p.user.create({
+      data: { username: key, keyHash, playerNo: (top?.playerNo ?? 0) + 1 },
+    });
+    return mapUser(u);
   }
   const store = await readStore();
-  const user: DbUser = { id: randomUUID(), email: key, password: passwordHash, createdAt: now() };
+  const playerNo = store.users.reduce((m, u) => Math.max(m, Number(u.playerNo) || 0), 0) + 1;
+  const user: DbUser = {
+    id: randomUUID(),
+    username: key,
+    keyHash,
+    playerNo,
+    currentArchiveId: null,
+    archiveGen: 0,
+    createdAt: now(),
+  };
   await writeStore({ ...store, users: [...store.users, user] });
   return user;
 }
 
+/**
+ * 推进档案世代：首次建档不换号，死亡后重建则 playerNo 递增。
+ * 返回新的编号与世代。
+ */
+async function advanceGeneration(userId: string): Promise<{ playerNo: number; gen: number }> {
+  const p = await getPrisma();
+  if (p) {
+    const u = await p.user.findUnique({ where: { id: userId } });
+    if (!u) return { playerNo: 0, gen: 1 };
+    const prevGen = Number(u.archiveGen ?? 0);
+    const gen = prevGen + 1;
+    let playerNo = Number(u.playerNo);
+    if (prevGen > 0) {
+      const top = await p.user.findFirst({ orderBy: { playerNo: 'desc' }, select: { playerNo: true } });
+      playerNo = (top?.playerNo ?? 0) + 1;
+    }
+    await p.user.update({ where: { id: userId }, data: { archiveGen: gen, playerNo } });
+    return { playerNo, gen };
+  }
+  const store = await readStore();
+  const idx = store.users.findIndex((u) => u.id === userId);
+  if (idx < 0) return { playerNo: 0, gen: 1 };
+  const u = store.users[idx];
+  const gen = (Number(u.archiveGen) || 0) + 1;
+  let playerNo = Number(u.playerNo) || 0;
+  if ((Number(u.archiveGen) || 0) > 0) {
+    playerNo = store.users.reduce((m, x) => Math.max(m, Number(x.playerNo) || 0), 0) + 1;
+  }
+  const users = [...store.users];
+  users[idx] = { ...u, archiveGen: gen, playerNo };
+  await writeStore({ ...store, users });
+  return { playerNo, gen };
+}
+
+/** 重建档案时递增编号（死亡不删号，只换编号） */
+export async function bumpPlayerNo(userId: string): Promise<number> {
+  const p = await getPrisma();
+  if (p) {
+    const top = await p.user.findFirst({ orderBy: { playerNo: 'desc' }, select: { playerNo: true } });
+    const next = (top?.playerNo ?? 0) + 1;
+    const u = await p.user.update({ where: { id: userId }, data: { playerNo: next } });
+    return u.playerNo;
+  }
+  const store = await readStore();
+  const idx = store.users.findIndex((u) => u.id === userId);
+  if (idx < 0) return 0;
+  const next = store.users.reduce((m, u) => Math.max(m, Number(u.playerNo) || 0), 0) + 1;
+  const users = [...store.users];
+  users[idx] = { ...users[idx], playerNo: next };
+  await writeStore({ ...store, users });
+  return next;
+}
+
+export async function setCurrentArchive(userId: string, archiveId: string | null): Promise<void> {
+  const p = await getPrisma();
+  if (p) {
+    await p.user.update({ where: { id: userId }, data: { currentArchiveId: archiveId } });
+    return;
+  }
+  const store = await readStore();
+  const users = store.users.map((u) => (u.id === userId ? { ...u, currentArchiveId: archiveId } : u));
+  await writeStore({ ...store, users });
+}
+
 /* =========================================================
- * Archive
+ * Archive —— 角色层（死亡即物理删除）
  * ========================================================= */
 
 export async function getArchive(userId: string): Promise<DbArchive | null> {
@@ -244,8 +512,13 @@ export async function getArchive(userId: string): Promise<DbArchive | null> {
 }
 
 export async function createArchive(input: ArchiveCreateInput): Promise<DbArchive> {
+  // 先推进世代：首次建档沿用注册时的编号，死亡后重建才递增
+  await advanceGeneration(input.userId);
+
   const p = await getPrisma();
   if (p) {
+    // 同一账号只保留一份档案
+    await p.archive.deleteMany({ where: { userId: input.userId } });
     const a = await p.archive.create({
       data: {
         userId: input.userId,
@@ -258,6 +531,9 @@ export async function createArchive(input: ArchiveCreateInput): Promise<DbArchiv
         st: input.st,
         rating: input.rating,
         growthPoints: input.growthPoints,
+        abilityName: input.abilityName,
+        abilityDesc: input.abilityDesc,
+        abilityRarity: input.abilityRarity,
         status: input.status ?? 'alive',
         currentClues: input.currentClues ?? [],
         difficulty: input.difficulty,
@@ -267,28 +543,21 @@ export async function createArchive(input: ArchiveCreateInput): Promise<DbArchiv
         turn: input.turn ?? 0,
       },
     });
+    await setCurrentArchive(input.userId, a.id);
     return mapArchive(a);
   }
   const store = await readStore();
-  const ts = now();
   const archive: DbArchive = {
-    id: randomUUID(),
-    createdAt: ts,
-    updatedAt: ts,
-    status: 'alive',
-    growthPoints: 0,
-    currentClues: [],
-    difficulty: null,
-    scenarioId: null,
-    scenarioName: null,
-    currentRole: null,
-    turn: 0,
     ...input,
+    id: randomUUID(),
+    status: input.status ?? 'alive',
+    updatedAt: now(),
   };
   await writeStore({
     ...store,
     archives: [...store.archives.filter((a) => a.userId !== input.userId), archive],
   });
+  await setCurrentArchive(input.userId, archive.id);
   return archive;
 }
 
@@ -297,13 +566,7 @@ export async function updateArchive(userId: string, patch: ArchivePatch): Promis
   if (p) {
     const exists = await p.archive.findUnique({ where: { userId } });
     if (!exists) return null;
-    const a = await p.archive.update({
-      where: { userId },
-      data: {
-        ...patch,
-        ...(patch.currentClues ? { currentClues: patch.currentClues } : {}),
-      },
-    });
+    const a = await p.archive.update({ where: { userId }, data: { ...patch } });
     return mapArchive(a);
   }
   const store = await readStore();
@@ -316,12 +579,13 @@ export async function updateArchive(userId: string, patch: ArchivePatch): Promis
   return next;
 }
 
-/** 物理删除档案（死亡即销毁） */
+/** 物理删除档案（死亡即销毁，账号保留） */
 export async function deleteArchive(userId: string): Promise<boolean> {
   const p = await getPrisma();
   if (p) {
     try {
       await p.archive.delete({ where: { userId } });
+      await setCurrentArchive(userId, null);
       return true;
     } catch {
       return false;
@@ -331,13 +595,11 @@ export async function deleteArchive(userId: string): Promise<boolean> {
   const before = store.archives.length;
   const archives = store.archives.filter((a) => a.userId !== userId);
   await writeStore({ ...store, archives });
+  await setCurrentArchive(userId, null);
   return archives.length < before;
 }
 
-/**
- * BE 销毁动画的逐行清库：把某个字段置空。
- * 与界面上「每打印一行，对应 UI 元素消失」一一对应。
- */
+/** BE 销毁动画的逐行清库：把某个字段置空 */
 export async function wipeField(userId: string, field: keyof DbArchive): Promise<void> {
   const table: Partial<Record<keyof DbArchive, ArchivePatch>> = {
     username: { username: '' },
@@ -355,9 +617,432 @@ export async function wipeField(userId: string, field: keyof DbArchive): Promise
     scenarioId: { scenarioId: null },
     scenarioName: { scenarioName: null },
     turn: { turn: 0 },
+    abilityName: { abilityName: '—' },
+    abilityDesc: { abilityDesc: '' },
+    abilityRarity: { abilityRarity: 'common' },
     status: { status: 'dead' },
   };
   const patch = table[field];
   if (!patch) return;
   await updateArchive(userId, patch);
+}
+
+/* =========================================================
+ * 社区论坛
+ * ========================================================= */
+
+export async function createPost(input: {
+  userId: string;
+  title: string;
+  content: string;
+  tags: string[];
+  repostOfId?: string | null;
+}): Promise<DbPost> {
+  const p = await getPrisma();
+  if (p) {
+    const post = await p.post.create({
+      data: {
+        userId: input.userId,
+        title: input.title,
+        content: input.content,
+        tags: input.tags,
+        repostOfId: input.repostOfId ?? null,
+      },
+    });
+    return mapPost(post);
+  }
+  const store = await readStore();
+  const post: DbPost = {
+    id: randomUUID(),
+    userId: input.userId,
+    title: input.title,
+    content: input.content,
+    tags: input.tags,
+    repostOfId: input.repostOfId ?? null,
+    createdAt: now(),
+  };
+  await writeStore({ ...store, posts: [post, ...store.posts] });
+  return post;
+}
+
+export async function listPosts(opts: {
+  viewerId?: string | null;
+  tag?: string | null;
+  query?: string | null;
+}): Promise<PostListItem[]> {
+  const p = await getPrisma();
+  const viewerId = opts.viewerId ?? null;
+  const tag = opts.tag?.trim() || null;
+  const q = opts.query?.trim().toLowerCase() || null;
+
+  let rawPosts: DbPost[];
+  let rawLikes: { userId: string; postId: string }[] = [];
+  let rawFavs: { userId: string; postId: string }[] = [];
+  let rawComments: { postId: string }[] = [];
+  let users: DbUser[];
+
+  if (p) {
+    const rows = await p.post.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
+    rawPosts = rows.map(mapPost);
+    rawLikes = (await p.like.findMany({ select: { userId: true, postId: true } })) as typeof rawLikes;
+    rawFavs = (await p.favorite.findMany({ select: { userId: true, postId: true } })) as typeof rawFavs;
+    rawComments = (await p.comment.findMany({ select: { postId: true } })) as typeof rawComments;
+    const ids = [...new Set(rawPosts.map((x) => x.userId))];
+    const urows = await p.user.findMany({ where: { id: { in: ids } } });
+    users = urows.map(mapUser);
+  } else {
+    const store = await readStore();
+    rawPosts = [...store.posts].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    rawLikes = store.likes;
+    rawFavs = store.favorites;
+    rawComments = store.comments;
+    users = store.users;
+  }
+
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  const likeCount = new Map<string, number>();
+  const favCount = new Map<string, number>();
+  const cmtCount = new Map<string, number>();
+  const likedSet = new Set<string>();
+  const favSet = new Set<string>();
+
+  for (const l of rawLikes) {
+    likeCount.set(l.postId, (likeCount.get(l.postId) ?? 0) + 1);
+    if (viewerId && l.userId === viewerId) likedSet.add(l.postId);
+  }
+  for (const f of rawFavs) {
+    favCount.set(f.postId, (favCount.get(f.postId) ?? 0) + 1);
+    if (viewerId && f.userId === viewerId) favSet.add(f.postId);
+  }
+  for (const c of rawComments) cmtCount.set(c.postId, (cmtCount.get(c.postId) ?? 0) + 1);
+
+  let items: PostListItem[] = rawPosts.map((post) => {
+    const author = userMap.get(post.userId);
+    return {
+      ...post,
+      author: {
+        id: post.userId,
+        username: author?.username ?? '已注销',
+        playerNo: author?.playerNo ?? 0,
+      },
+      likeCount: likeCount.get(post.id) ?? 0,
+      favoriteCount: favCount.get(post.id) ?? 0,
+      commentCount: cmtCount.get(post.id) ?? 0,
+      liked: likedSet.has(post.id),
+      favorited: favSet.has(post.id),
+      repostOf: null,
+    };
+  });
+
+  if (tag) items = items.filter((x) => x.tags.some((t) => t.toLowerCase() === tag.toLowerCase()));
+  if (q) {
+    items = items.filter(
+      (x) => x.title.toLowerCase().includes(q) || x.content.toLowerCase().includes(q),
+    );
+  }
+
+  // 补转发来源
+  const byId = new Map(rawPosts.map((x) => [x.id, x]));
+  for (const item of items) {
+    if (!item.repostOfId) continue;
+    const src = byId.get(item.repostOfId);
+    if (!src) continue;
+    const srcAuthor = userMap.get(src.userId);
+    item.repostOf = {
+      id: src.id,
+      title: src.title,
+      author: srcAuthor ? `${srcAuthor.username}#${srcAuthor.playerNo}` : '已注销',
+    };
+  }
+
+  return items;
+}
+
+export async function getPost(id: string): Promise<DbPost | null> {
+  const p = await getPrisma();
+  if (p) {
+    const post = await p.post.findUnique({ where: { id } });
+    return post ? mapPost(post) : null;
+  }
+  const store = await readStore();
+  return store.posts.find((x) => x.id === id) ?? null;
+}
+
+export async function deletePost(id: string, userId: string): Promise<boolean> {
+  const p = await getPrisma();
+  if (p) {
+    const post = await p.post.findUnique({ where: { id } });
+    if (!post || post.userId !== userId) return false;
+    await p.post.delete({ where: { id } });
+    return true;
+  }
+  const store = await readStore();
+  const post = store.posts.find((x) => x.id === id);
+  if (!post || post.userId !== userId) return false;
+  await writeStore({
+    ...store,
+    posts: store.posts.filter((x) => x.id !== id),
+    comments: store.comments.filter((c) => c.postId !== id),
+    likes: store.likes.filter((l) => l.postId !== id),
+    favorites: store.favorites.filter((f) => f.postId !== id),
+  });
+  return true;
+}
+
+/* ---------- 评论（楼中楼） ---------- */
+
+export async function createComment(input: {
+  userId: string;
+  postId: string;
+  content: string;
+  parentId?: string | null;
+}): Promise<DbComment> {
+  const p = await getPrisma();
+  if (p) {
+    const c = await p.comment.create({
+      data: {
+        userId: input.userId,
+        postId: input.postId,
+        content: input.content,
+        parentId: input.parentId ?? null,
+      },
+    });
+    return mapComment(c);
+  }
+  const store = await readStore();
+  const c: DbComment = {
+    id: randomUUID(),
+    userId: input.userId,
+    postId: input.postId,
+    content: input.content,
+    parentId: input.parentId ?? null,
+    createdAt: now(),
+  };
+  await writeStore({ ...store, comments: [...store.comments, c] });
+  return c;
+}
+
+export async function listComments(postId: string): Promise<CommentNode[]> {
+  const p = await getPrisma();
+  let raw: DbComment[];
+  let users: DbUser[];
+
+  if (p) {
+    const rows = await p.comment.findMany({
+      where: { postId },
+      orderBy: { createdAt: 'asc' },
+    });
+    raw = rows.map(mapComment);
+    const ids = [...new Set(raw.map((c) => c.userId))];
+    users = (await p.user.findMany({ where: { id: { in: ids } } })).map(mapUser);
+  } else {
+    const store = await readStore();
+    raw = store.comments
+      .filter((c) => c.postId === postId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+    users = store.users;
+  }
+
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  const nodes: CommentNode[] = raw.map((c) => ({
+    ...c,
+    author: {
+      id: c.userId,
+      username: userMap.get(c.userId)?.username ?? '已注销',
+      playerNo: userMap.get(c.userId)?.playerNo ?? 0,
+    },
+    children: [],
+  }));
+
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const roots: CommentNode[] = [];
+  for (const n of nodes) {
+    const parent = n.parentId ? byId.get(n.parentId) : null;
+    if (parent) parent.children.push(n);
+    else roots.push(n);
+  }
+  return roots;
+}
+
+/* ---------- 点赞 / 收藏 ---------- */
+
+export async function toggleLike(userId: string, postId: string): Promise<boolean> {
+  const p = await getPrisma();
+  if (p) {
+    const exist = await p.like.findUnique({ where: { userId_postId: { userId, postId } } });
+    if (exist) {
+      await p.like.delete({ where: { userId_postId: { userId, postId } } });
+      return false;
+    }
+    await p.like.create({ data: { userId, postId } });
+    return true;
+  }
+  const store = await readStore();
+  const exist = store.likes.find((l) => l.userId === userId && l.postId === postId);
+  if (exist) {
+    await writeStore({ ...store, likes: store.likes.filter((l) => l.id !== exist.id) });
+    return false;
+  }
+  await writeStore({
+    ...store,
+    likes: [...store.likes, { id: randomUUID(), userId, postId }],
+  });
+  return true;
+}
+
+export async function toggleFavorite(userId: string, postId: string): Promise<boolean> {
+  const p = await getPrisma();
+  if (p) {
+    const exist = await p.favorite.findUnique({ where: { userId_postId: { userId, postId } } });
+    if (exist) {
+      await p.favorite.delete({ where: { userId_postId: { userId, postId } } });
+      return false;
+    }
+    await p.favorite.create({ data: { userId, postId } });
+    return true;
+  }
+  const store = await readStore();
+  const exist = store.favorites.find((f) => f.userId === userId && f.postId === postId);
+  if (exist) {
+    await writeStore({ ...store, favorites: store.favorites.filter((f) => f.id !== exist.id) });
+    return false;
+  }
+  await writeStore({
+    ...store,
+    favorites: [...store.favorites, { id: randomUUID(), userId, postId }],
+  });
+  return true;
+}
+
+/* =========================================================
+ * 好友关系
+ * ========================================================= */
+
+export async function listFriends(userId: string): Promise<FriendItem[]> {
+  const p = await getPrisma();
+  let raw: DbFriendship[];
+  let users: DbUser[];
+  let archives: DbArchive[];
+
+  if (p) {
+    const rows = await p.friendship.findMany({
+      where: { OR: [{ user1Id: userId }, { user2Id: userId }] },
+      orderBy: { createdAt: 'desc' },
+    });
+    raw = rows.map(mapFriendship);
+    const ids = [...new Set(raw.flatMap((f) => [f.user1Id, f.user2Id]))];
+    users = (await p.user.findMany({ where: { id: { in: ids } } })).map(mapUser);
+    archives = (
+      await p.archive.findMany({ where: { userId: { in: ids } } })
+    ).map(mapArchive);
+  } else {
+    const store = await readStore();
+    raw = store.friendships.filter((f) => f.user1Id === userId || f.user2Id === userId);
+    users = store.users;
+    archives = store.archives;
+  }
+
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  const arcMap = new Map(archives.map((a) => [a.userId, a]));
+
+  return raw.map((f) => {
+    const outgoing = f.user1Id === userId;
+    const otherId = outgoing ? f.user2Id : f.user1Id;
+    const u = userMap.get(otherId);
+    const arc = arcMap.get(otherId);
+    return {
+      friendshipId: f.id,
+      user: {
+        id: otherId,
+        username: u?.username ?? '已注销',
+        playerNo: u?.playerNo ?? 0,
+      },
+      status: f.status,
+      direction: outgoing ? 'outgoing' : 'incoming',
+      createdAt: f.createdAt,
+      archiveStatus: arc ? (arc.status === 'dead' ? 'dead' : 'alive') : 'none',
+      archiveName: arc?.username ?? null,
+      rating: arc?.rating ?? null,
+    };
+  });
+}
+
+export async function sendFriendRequest(
+  userId: string,
+  targetUserId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (userId === targetUserId) return { ok: false, reason: '不能添加自己' };
+
+  const p = await getPrisma();
+  if (p) {
+    const dup = await p.friendship.findFirst({
+      where: {
+        OR: [
+          { user1Id: userId, user2Id: targetUserId },
+          { user1Id: targetUserId, user2Id: userId },
+        ],
+      },
+    });
+    if (dup) return { ok: false, reason: dup.status === 'accepted' ? '已是好友' : '请求已发出' };
+    await p.friendship.create({ data: { user1Id: userId, user2Id: targetUserId } });
+    return { ok: true };
+  }
+
+  const store = await readStore();
+  const dup = store.friendships.find(
+    (f) =>
+      (f.user1Id === userId && f.user2Id === targetUserId) ||
+      (f.user1Id === targetUserId && f.user2Id === userId),
+  );
+  if (dup) return { ok: false, reason: dup.status === 'accepted' ? '已是好友' : '请求已发出' };
+  const f: DbFriendship = {
+    id: randomUUID(),
+    user1Id: userId,
+    user2Id: targetUserId,
+    status: 'pending',
+    createdAt: now(),
+  };
+  await writeStore({ ...store, friendships: [...store.friendships, f] });
+  return { ok: true };
+}
+
+export async function respondFriendRequest(
+  userId: string,
+  friendshipId: string,
+  accept: boolean,
+): Promise<boolean> {
+  const p = await getPrisma();
+  if (p) {
+    const f = await p.friendship.findUnique({ where: { id: friendshipId } });
+    if (!f || f.user2Id !== userId) return false;
+    if (accept) {
+      await p.friendship.update({ where: { id: friendshipId }, data: { status: 'accepted' } });
+    } else {
+      await p.friendship.delete({ where: { id: friendshipId } });
+    }
+    return true;
+  }
+  const store = await readStore();
+  const f = store.friendships.find((x) => x.id === friendshipId);
+  if (!f || f.user2Id !== userId) return false;
+  const friendships = accept
+    ? store.friendships.map((x) => (x.id === friendshipId ? { ...x, status: 'accepted' as const } : x))
+    : store.friendships.filter((x) => x.id !== friendshipId);
+  await writeStore({ ...store, friendships });
+  return true;
+}
+
+export async function removeFriend(userId: string, friendshipId: string): Promise<boolean> {
+  const p = await getPrisma();
+  if (p) {
+    const f = await p.friendship.findUnique({ where: { id: friendshipId } });
+    if (!f || (f.user1Id !== userId && f.user2Id !== userId)) return false;
+    await p.friendship.delete({ where: { id: friendshipId } });
+    return true;
+  }
+  const store = await readStore();
+  const f = store.friendships.find((x) => x.id === friendshipId);
+  if (!f || (f.user1Id !== userId && f.user2Id !== userId)) return false;
+  await writeStore({ ...store, friendships: store.friendships.filter((x) => x.id !== friendshipId) });
+  return true;
 }

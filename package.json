@@ -5,6 +5,7 @@
   "description": "《副本 / INSTANCE》—— 状态机驱动 + LLM 对话流 + 数据库持久化的暗黑悬疑文字剧本杀",
   "scripts": {
     "dev": "next dev",
+    "dev:turbo": "next dev --turbopack",
     "build": "next build",
     "build:turbo": "next build --turbopack",
     "start": "next start",
@@ -15,7 +16,7 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
-    "@prisma/client": "^7.10.0",
+    "@prisma/client": "^6.16.0",
     "@tsparticles/engine": "^4.4.0",
     "@tsparticles/react": "^4.4.0",
     "@tsparticles/slim": "^4.4.0",
@@ -35,7 +36,7 @@
     "@types/react-dom": "^19.0.3",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.5.1",
-    "prisma": "^7.10.0",
+    "prisma": "^6.16.0",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3"
   }

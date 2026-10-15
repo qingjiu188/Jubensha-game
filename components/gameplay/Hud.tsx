@@ -3,12 +3,14 @@
 import { Bookmark, Clock3, Skull } from 'lucide-react';
 import StatBar from '@/components/ui/StatBar';
 import RankBadge from '@/components/ui/RankBadge';
+import { AbilityIcon } from '@/components/ui/AbilityBadge';
 import { useGame } from '@/store/gameStore';
 
 export default function Hud() {
   const player = useGame((s) => s.player);
   const scenario = useGame((s) => s.scenario);
   const destroyed = useGame((s) => s.destroyed);
+  const account = useGame((s) => s.account);
 
   const gone = (f: string) => destroyed.includes(f);
 
@@ -41,6 +43,33 @@ export default function Hud() {
             <RankBadge rank={player.rank} size="sm" showLabel={false} />
           </div>
         </div>
+
+        {/* 中右：异能 */}
+        {player.ability && (
+          <div
+            className={`flex items-center gap-2.5 border-l border-hairline pl-5 ${
+              gone('ability') ? 'animate-dissolve' : ''
+            }`}
+            title={player.ability.desc}
+          >
+            <AbilityIcon
+              name={player.ability.name}
+              rarity={player.ability.rarity}
+              size="sm"
+            />
+            <div className="leading-tight">
+              <p className="text-[9px] tracking-[0.3em] text-muted">ABILITY</p>
+              <p className="text-[12px] tracking-[0.12em] text-chalk">{player.ability.name}</p>
+            </div>
+          </div>
+        )}
+
+        {/* 账号编号 */}
+        {account && (
+          <div className="flex items-center border-l border-hairline pl-5 text-[10px] tracking-[0.2em] text-toxic/80">
+            No.{account.playerNo}
+          </div>
+        )}
 
         {/* 右：线索 / 回合 */}
         <div className={`flex items-center gap-5 ${gone('clues') ? 'animate-dissolve' : ''}`}>

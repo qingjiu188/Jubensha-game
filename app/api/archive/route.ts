@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import {
   createArchive,
   deleteArchive,
+  findUserById,
   getArchive,
   storageMode,
   updateArchive,
@@ -10,13 +11,14 @@ import {
   type ArchivePatch,
   type DbArchive,
 } from '@/lib/db';
+import { ABILITIES, rollAbility } from '@/lib/abilities';
 
 /* =========================================================
  * /api/archive
- *   GET    查询当前用户档案（不存在返回 archive: null）
- *   POST   建档（写入数据库）
+ *   GET    查询当前账号与其档案（不存在返回 archive: null）
+ *   POST   建档（写入数据库；异能终身锁定；死亡重建时 playerNo 递增）
  *   PATCH  同步状态 / BE 逐行清空字段
- *   DELETE 物理删除档案（死亡销毁）
+ *   DELETE 物理删除档案（死亡销毁 —— 只删角色层，账号保留）
  * ========================================================= */
 
 async function requireUserId(): Promise<string | null> {
@@ -31,15 +33,22 @@ export async function GET() {
   const userId = await requireUserId();
   if (!userId) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
 
-  const archive = await getArchive(userId);
-  return NextResponse.json({ archive, storage: await storageMode() });
+  const [archive, user] = await Promise.all([getArchive(userId), findUserById(userId)]);
+  return NextResponse.json({
+    archive,
+    user: user ? { id: user.id, username: user.username, playerNo: user.playerNo } : null,
+    storage: await storageMode(),
+  });
 }
 
 export async function POST(req: Request) {
   const userId = await requireUserId();
   if (!userId) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
 
-  let body: Partial<DbArchive> & { username?: string };
+  let body: Partial<DbArchive> & {
+    username?: string;
+    ability?: { name?: string; desc?: string; rarity?: string };
+  };
   try {
     body = await req.json();
   } catch {
@@ -47,7 +56,16 @@ export async function POST(req: Request) {
   }
 
   const username = String(body.username ?? '').trim();
-  if (!username) return NextResponse.json({ error: '档案代号不能为空' }, { status: 400 });
+  if (!username) return NextResponse.json({ error: '角色代号不能为空' }, { status: 400 });
+
+  // 异能：优先用前端 roll 出来的；不合法或缺失时后端自己 roll，保证一定有
+  let ability = body.ability;
+  const valid =
+    ability?.name && ABILITIES.some((a) => a.name === ability!.name && a.desc === ability!.desc);
+  if (!valid) {
+    const rolled = rollAbility();
+    ability = { name: rolled.name, desc: rolled.desc, rarity: rolled.rarity };
+  }
 
   const archive = await createArchive({
     userId,
@@ -60,6 +78,9 @@ export async function POST(req: Request) {
     st: clamp(Number(body.st ?? 100)),
     rating: String(body.rating ?? 'F'),
     growthPoints: Number(body.growthPoints ?? 0),
+    abilityName: String(ability!.name),
+    abilityDesc: String(ability!.desc),
+    abilityRarity: String(ability!.rarity ?? 'common'),
     status: 'alive',
     currentClues: Array.isArray(body.currentClues) ? (body.currentClues as string[]) : [],
     difficulty: body.difficulty ?? null,
@@ -69,7 +90,14 @@ export async function POST(req: Request) {
     turn: Number(body.turn ?? 0),
   });
 
-  return NextResponse.json({ ok: true, archive, storage: await storageMode() });
+  const user = await findUserById(userId);
+
+  return NextResponse.json({
+    ok: true,
+    archive,
+    playerNo: user?.playerNo ?? 0,
+    storage: await storageMode(),
+  });
 }
 
 export async function PATCH(req: Request) {
@@ -106,5 +134,11 @@ export async function DELETE() {
   if (!userId) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
 
   const done = await deleteArchive(userId);
-  return NextResponse.json({ ok: done, deleted: done });
+  const user = await findUserById(userId);
+  // 账号保留：论坛帖子 / 好友关系不受影响，仅角色层被销毁
+  return NextResponse.json({
+    ok: done,
+    deleted: done,
+    account: user ? { username: user.username, playerNo: user.playerNo } : null,
+  });
 }

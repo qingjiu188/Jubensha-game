@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import { signIn, signOut } from 'next-auth/react';
 import type {
+  AbilitySnapshot,
   DifficultyId,
   EndingType,
   LogEntry,
@@ -14,6 +15,7 @@ import type {
 import { parseNarrative } from '@/lib/parser';
 import { rankOf, totalScore } from '@/lib/rank';
 import { ROLE_POOL } from '@/lib/mock';
+import { rollAbility } from '@/lib/abilities';
 import { sendAction } from '@/lib/api';
 import {
   createArchive as apiCreateArchive,
@@ -37,7 +39,14 @@ const PURGE_MAP: Record<string, keyof DbArchive> = {
   rank: 'rating',
   name: 'username',
   instance: 'turn',
+  ability: 'abilityName',
 };
+
+export interface Account {
+  id: string;
+  username: string;
+  playerNo: number;
+}
 
 interface GameStore {
   /* ---------- 状态 ---------- */
@@ -53,8 +62,8 @@ interface GameStore {
   /** BE 销毁动画已经抹除的字段 */
   destroyed: string[];
 
-  /* ---------- 登录态 ---------- */
-  userEmail: string | null;
+  /* ---------- 登录态（账号层，死亡不清零） ---------- */
+  account: Account | null;
   authReady: boolean;
   /** 数据库里是否已存在存活档案 */
   hasArchive: boolean;
@@ -66,9 +75,10 @@ interface GameStore {
   setName: (name: string) => void;
   rollStats: () => void;
   bootstrap: () => Promise<void>;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  login: (username: string, key: string) => Promise<void>;
+  register: (username: string, key: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshAccount: () => Promise<void>;
   confirmCharacter: () => Promise<void>;
   chooseDifficulty: (d: DifficultyId) => void;
   chooseScenario: (s: Scenario) => void;
@@ -94,6 +104,7 @@ const EMPTY_PLAYER: PlayerState = {
   clues: 0,
   clueTotal: 5,
   turn: 0,
+  ability: null,
 };
 
 /** 追加一条日志（自动走解析器） */
@@ -118,17 +129,41 @@ function hydrate(a: DbArchive): PlayerState {
     clues: Array.isArray(a.currentClues) ? a.currentClues.length : 0,
     clueTotal: 5,
     turn: a.turn ?? 0,
+    ability: a.abilityName && a.abilityName !== '—'
+      ? {
+          name: a.abilityName,
+          desc: a.abilityDesc,
+          rarity: (a.abilityRarity as AbilitySnapshot['rarity']) ?? 'common',
+        }
+      : null,
   };
 }
 
-async function readSessionEmail(): Promise<string | null> {
+async function readSessionAccount(): Promise<Account | null> {
   try {
     const res = await fetch('/api/auth/session', { cache: 'no-store' });
-    const data = (await res.json()) as { user?: { email?: string } };
-    return data?.user?.email ?? null;
+    const data = (await res.json()) as {
+      user?: { id?: string; name?: string | null; email?: string | null };
+    };
+    const u = data?.user;
+    if (!u?.id) return null;
+    return { id: u.id, username: String(u.name ?? ''), playerNo: 0 };
   } catch {
     return null;
   }
+}
+
+/** 掷一套新属性 + 新异能（建档 / 死亡重建时调用） */
+function freshRoll(): { stats: { str: number; int: number; agi: number }; role: string; ability: AbilitySnapshot } {
+  const roll = () => 3 + Math.floor(Math.random() * 18);
+  const stats = { str: roll(), int: roll(), agi: roll() };
+  const role = ROLE_POOL[Math.floor(Math.random() * ROLE_POOL.length)];
+  const a = rollAbility();
+  return {
+    stats,
+    role,
+    ability: { name: a.name, desc: a.desc, rarity: a.rarity, bonus: a.bonus },
+  };
 }
 
 export const useGame = create<GameStore>((set, get) => ({
@@ -143,7 +178,7 @@ export const useGame = create<GameStore>((set, get) => ({
   endingTitle: '',
   destroyed: [],
 
-  userEmail: null,
+  account: null,
   authReady: false,
   hasArchive: false,
   authError: null,
@@ -153,14 +188,12 @@ export const useGame = create<GameStore>((set, get) => ({
 
   setName: (name) => set((s) => ({ player: { ...s.player, name } })),
 
-  /** 随机生成三维属性，并同步评级 */
+  /** 随机生成三维属性 + 异能，并同步评级 */
   rollStats: () =>
     set((s) => {
-      const roll = () => 3 + Math.floor(Math.random() * 18); // 3~20
-      const stats = { str: roll(), int: roll(), agi: roll() };
-      const role = ROLE_POOL[Math.floor(Math.random() * ROLE_POOL.length)];
+      const { stats, role, ability } = freshRoll();
       return {
-        player: { ...s.player, ...stats, role, rank: rankOf(stats) },
+        player: { ...s.player, ...stats, role, ability, rank: rankOf(stats) },
       };
     }),
 
@@ -168,58 +201,74 @@ export const useGame = create<GameStore>((set, get) => ({
    * 启动：读 session → 查档案 → 决定落到哪个视图
    * ===================================================== */
   bootstrap: async () => {
-    const email = await readSessionEmail();
-    if (!email) {
-      set({ userEmail: null, authReady: true, phase: 'AUTH', hasArchive: false });
+    const acc = await readSessionAccount();
+    if (!acc) {
+      set({ account: null, authReady: true, phase: 'AUTH', hasArchive: false });
       return;
     }
-    set({ userEmail: email });
 
     try {
-      const { archive } = await fetchArchive();
+      const { archive, user } = await fetchArchive();
+      const account: Account = {
+        id: acc.id,
+        username: user?.username || acc.username,
+        playerNo: user?.playerNo ?? 0,
+      };
+
       if (archive && archive.status === 'alive') {
-        set({
-          player: hydrate(archive),
-          hasArchive: true,
-          authReady: true,
-          phase: 'LOBBY',
-        });
+        set({ account, player: hydrate(archive), hasArchive: true, authReady: true, phase: 'LOBBY' });
       } else {
-        // 无档案 / 档案已销毁 → 重新建档
-        set({ player: { ...EMPTY_PLAYER }, hasArchive: false, authReady: true, phase: 'CHARACTER' });
+        // 无档案 / 档案已销毁 → 重新建档（掷新属性与新异能）
+        set({ account, player: { ...EMPTY_PLAYER }, hasArchive: false, authReady: true, phase: 'CHARACTER' });
         get().rollStats();
       }
     } catch {
-      set({ hasArchive: false, authReady: true, phase: 'CHARACTER' });
+      set({ account: acc, hasArchive: false, authReady: true, phase: 'CHARACTER' });
       get().rollStats();
     }
   },
 
-  login: async (email, password) => {
+  /** 登录后刷新账号信息（编号可能已变化） */
+  refreshAccount: async () => {
+    try {
+      const { user } = await fetchArchive();
+      if (user) {
+        set((s) => ({
+          account: s.account
+            ? { ...s.account, username: user.username, playerNo: user.playerNo }
+            : { id: user.id, username: user.username, playerNo: user.playerNo },
+        }));
+      }
+    } catch {
+      /* ignore */
+    }
+  },
+
+  login: async (username, key) => {
     set({ submitting: true, authError: null });
-    const res = await signIn('credentials', { email, password, redirect: false });
+    const res = await signIn('credentials', { username, key, redirect: false });
     if (res?.error) {
-      set({ submitting: false, authError: '邮箱或密码错误' });
+      set({ submitting: false, authError: '档案代号或接入密钥错误' });
       return;
     }
     await get().bootstrap();
     set({ submitting: false });
   },
 
-  register: async (email, password) => {
+  register: async (username, key) => {
     set({ submitting: true, authError: null });
     try {
       const r = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ username, key }),
       });
       const data = (await r.json()) as { error?: string };
       if (!r.ok) {
-        set({ submitting: false, authError: data.error ?? '注册失败' });
+        set({ submitting: false, authError: data.error ?? '接入失败' });
         return;
       }
-      await get().login(email, password);
+      await get().login(username, key);
     } catch {
       set({ submitting: false, authError: '网络异常' });
     }
@@ -227,27 +276,29 @@ export const useGame = create<GameStore>((set, get) => ({
 
   logout: async () => {
     await signOut({ redirect: false });
-    set({ userEmail: null, hasArchive: false, player: { ...EMPTY_PLAYER }, phase: 'AUTH' });
+    set({ account: null, hasArchive: false, player: { ...EMPTY_PLAYER }, phase: 'AUTH' });
   },
 
-  /** 确认建档 → POST /api/archive 写入数据库 */
+  /** 确认建档 → POST /api/archive 写入数据库（异能终身锁定） */
   confirmCharacter: async () => {
     const st = get();
     if (!st.player.name.trim()) return;
     set({ submitting: true });
     try {
-      await apiCreateArchive({
+      const { playerNo } = await apiCreateArchive({
         username: st.player.name.trim(),
         str: st.player.str,
         int: st.player.int,
         agi: st.player.agi,
         rating: rankOf(st.player),
         currentRole: st.player.role,
+        ability: st.player.ability,
       });
       set({
         submitting: false,
         hasArchive: true,
         player: { ...st.player, rank: rankOf(st.player) },
+        account: st.account ? { ...st.account, playerNo: playerNo || st.account.playerNo } : null,
         phase: 'DIFFICULTY',
       });
     } catch {
@@ -380,7 +431,7 @@ export const useGame = create<GameStore>((set, get) => ({
     }
   },
 
-  /** BE 收尾：物理删除整条档案 */
+  /** BE 收尾：物理删除整条档案（账号保留） */
   finalizePurge: async () => {
     try {
       await apiDeleteArchive();
@@ -394,7 +445,7 @@ export const useGame = create<GameStore>((set, get) => ({
 
   reset: () => {
     const s = get();
-    // 档案已销毁 → 回建档（掷新属性）；仍存活 → 回主页
+    // 档案已销毁 → 回建档（掷新属性与新异能）；仍存活 → 回主页
     if (s.hasArchive) {
       set({
         phase: 'LOBBY',
@@ -407,12 +458,10 @@ export const useGame = create<GameStore>((set, get) => ({
       return;
     }
 
-    const roll = () => 3 + Math.floor(Math.random() * 18);
-    const stats = { str: roll(), int: roll(), agi: roll() };
-    const role = ROLE_POOL[Math.floor(Math.random() * ROLE_POOL.length)];
+    const { stats, role, ability } = freshRoll();
     set({
       phase: 'CHARACTER',
-      player: { ...EMPTY_PLAYER, ...stats, role, rank: rankOf(stats) },
+      player: { ...EMPTY_PLAYER, ...stats, role, ability, rank: rankOf(stats) },
       scenario: null,
       logs: [],
       destroyed: [],
