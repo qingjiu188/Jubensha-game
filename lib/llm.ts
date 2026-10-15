@@ -20,18 +20,35 @@ const DEFAULT_MODEL = process.env.LLM_MODEL ?? 'gpt-4o-mini';
 /** 未接入任何密钥时的兜底说明（只给前端展示，不含密钥） */
 export const LLM_SOURCE = { player: 'PLAYER_KEY', env: 'SERVER_KEY', mock: 'MOCK' } as const;
 
+/** 单回合正文最短字数（不含选项行）。低于这个值会要求模型重写一次 */
+export const MIN_NARRATIVE_CHARS = 500;
+/** 给模型的输出预算：500 字正文 ≈ 900+ token，留足余量 */
+const MAX_TOKENS = 2400;
+
 const BASE_RULES = `你是文字互动游戏《副本 INSTANCE》的系统。你只负责生成这一个回合。
 
 【核心设定】
 副本只有「背景」是固定的，其余一切由你即兴生成：场景布局、NPC、怪物、机关、道具、线索、结局走向，每次都不同。
 不要复述任何预设剧情，也不要重复之前出现过的桥段。同一个副本两次进入，体验必须不同。
 
+【篇幅要求（最重要）】
+正文（不含结尾的三个选项）必须 **不少于 500 个汉字**，通常写到 600–800 字才算合格。
+写不够就是失职。为了达到篇幅，你必须：
+1. 至少分成 5 个自然段，每段承担不同功能，不要一段写完；
+2. 第 1 段：环境铺陈——空间结构、光线、气味、温度、材质、声音的来源，写到能让人身临其境；
+3. 第 2 段：推进玩家刚才那个行动的具体后果，动作要有过程，不要一句话带过；
+4. 第 3 段：新出现的人/物/异常，给足细节（外形、声音、气味、它的行为逻辑）；
+5. 第 4 段：玩家的身体与心理反应，以及环境对他的反作用；
+6. 第 5 段：悬念或新的压力——一个没解开的细节、一个倒计时、一个正在逼近的东西。
+严禁为了凑字而复述已有内容或灌水，每一句都要推进信息量。
+
 【输出格式】
 1. 正文用这些标签标注多模态内容：
-   【画面】…        -> 环境或特写描写
+   【画面】…        -> 环境或特写描写（每段可出现多个【画面】）
    【音效】…        -> 声音描写
    【肢体】…        -> 角色身体反应的旁白
    【判定：xxx | d20=n | 目标 m | 成功/失败】 -> 需要掷骰时
+   建议：【画面】不少于 3 个，【音效】不少于 1 个，【肢体】不少于 1 个。
 2. 判定必须显式写出 d20 值与目标值，并给出成功或失败。
    判定公式：d20 + ⌊属性/10⌋ + 情境修正 ≥ 目标值。目标值一般取 10~25。
 3. 玩家击杀某个宿主时，另起一段写【击杀：宿主名】。
@@ -40,6 +57,7 @@ const BASE_RULES = `你是文字互动游戏《副本 INSTANCE》的系统。你
 A. 动作
 B. 动作
 C. 动作
+   选项不计入 500 字。
 
 【硬性约束】
 - 只推进一个回合，然后停下，等玩家输入。
@@ -154,38 +172,68 @@ async function realLLM(
   payload: SendActionPayload,
   key: { apiKey: string; endpoint: string; model: string },
 ): Promise<SendActionResult> {
-  const userMsg = [
+  const baseUserMsg = [
     `【副本】${payload.scenarioTitle ?? payload.scenarioId}　【难度】${payload.difficulty}`,
     `【当前状态】生命 ${payload.playerState.hp} / 精神 ${payload.playerState.sp} / 体力 ${payload.playerState.st}`,
     `【近期上下文（仅供保持连贯，不得原样复述）】`,
     payload.history.map((h) => `${h.role}: ${h.content}`).join('\n') || '（本局开始）',
     `【玩家行动】${payload.userInput}`,
-    `请生成下一个回合。`,
   ].join('\n');
 
-  const res = await fetch(key.endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: key.model,
-      temperature: 1.0,
-      messages: [
-        { role: 'system', content: buildSystemPrompt(payload) },
-        { role: 'user', content: userMsg },
-      ],
-    }),
-  });
+  const call = async (userMsg: string): Promise<string> => {
+    const res = await fetch(key.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: key.model,
+        temperature: 1.0,
+        max_tokens: MAX_TOKENS,
+        messages: [
+          { role: 'system', content: buildSystemPrompt(payload) },
+          { role: 'user', content: userMsg },
+        ],
+      }),
+    });
 
-  if (!res.ok) throw new Error(`LLM ${res.status}`);
-  const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const text = data.choices?.[0]?.message?.content ?? '';
-  if (!text.trim()) throw new Error('LLM_EMPTY');
+    if (!res.ok) throw new Error(`LLM ${res.status}`);
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const text = data.choices?.[0]?.message?.content ?? '';
+    if (!text.trim()) throw new Error('LLM_EMPTY');
+    return text;
+  };
 
   // 掉落武器的属性档位由前端随机决定，模型只负责叙事，不给数值
-  return splitTurn(text);
+  let result = splitTurn(await call(`${baseUserMsg}\n请生成下一个回合，正文不少于 500 字。`));
+
+  // 篇幅不够就再要一次：把上一稿发回去要求扩写，取更长的一稿
+  if (countNarrativeChars(result.narrative) < MIN_NARRATIVE_CHARS) {
+    try {
+      const retryText = await call(
+        `${baseUserMsg}\n` +
+          `你上一稿的正文只有 ${countNarrativeChars(result.narrative)} 字，太短了。\n` +
+          `下面是你上一稿：\n"""\n${result.narrative}\n"""\n` +
+          `请在保持剧情走向不变的前提下扩写到 ${MIN_NARRATIVE_CHARS + 200} 字以上：` +
+          `补充环境细节、感官描写（声音/气味/触感/温度）、动作过程、以及玩家的身体与心理反应。\n` +
+          `仍然只能输出正文 + 三个选项，不要解释。`,
+      );
+      const retry = splitTurn(retryText);
+      if (countNarrativeChars(retry.narrative) > countNarrativeChars(result.narrative)) {
+        result = retry;
+      }
+    } catch {
+      /* 重写失败就用原稿，不打断游戏 */
+    }
+  }
+
+  return result;
+}
+
+/** 统计正文的有效字数：去掉标签名与空白，只算实际内容 */
+function countNarrativeChars(text: string): number {
+  return text.replace(/【[^】]*?[：:][^】]*?】/g, '').replace(/\s/g, '').length;
 }
 
 /** 把 LLM 纯文本切成「正文 + 三个选项 + 结局」 */
