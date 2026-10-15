@@ -71,9 +71,9 @@ model Archive {
   /// 角色名字（玩家自己起的，与账号代号、系统身份相互独立）
   displayName String?
   /// 性别：male / female / other / hidden
-  gender String?
+  gender String? @db.VarChar(16)
   /// 样貌自述（纯文本，进副本时注入 AI 上下文）
-  appearance String?
+  appearance String? @db.VarChar(300)
 
   str Int
   int Int
