@@ -55,8 +55,10 @@ export async function createArchive(input: {
     }),
   });
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(err.error ?? `ARCHIVE_POST ${res.status}`);
+    const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+    // 带上服务端 detail（如 Prisma 校验报错），建档页能直接看到真正原因
+    const msg = err.error ?? `ARCHIVE_POST ${res.status}`;
+    throw new Error(err.detail ? `${msg}：${String(err.detail).slice(0, 200)}` : msg);
   }
   const data = (await res.json()) as {
     archive: DbArchive;
