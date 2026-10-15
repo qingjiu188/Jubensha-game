@@ -30,7 +30,7 @@ import {
 import { loadAIConfig, saveAIConfig } from '@/lib/aiConfig';
 import type { PlayerAIConfig, PotionKind, Weapon } from '@/types';
 import { DROP_RATE, KILL_CREDITS } from '@/types';
-import { sendAction } from '@/lib/api';
+import { sendAction, timeoutFetch } from '@/lib/api';
 import {
   createArchive as apiCreateArchive,
   fetchArchive,
@@ -94,9 +94,13 @@ interface GameStore {
   hasArchive: boolean;
   authError: string | null;
   submitting: boolean;
+  /** 启动阶段的网络异常（连不上服务端时展示重试卡片，替代无限转圈） */
+  netError: string | null;
 
   /* ---------- 动作 ---------- */
   go: (p: Phase) => void;
+  /** 网络异常后由用户手动重试启动流程 */
+  retryBootstrap: () => void;
   /** 身份由系统分发，不再由玩家输入；此接口保留用于兼容 */
   setName: (name: string) => void;
   /** 拉取已被占用的身份（唯一性） */
@@ -204,18 +208,30 @@ function hydrate(a: DbArchive): PlayerState {
   };
 }
 
+/**
+ * 读 session。网络不通时 fetch 会无限挂起（移动端尤其常见），
+ * 所以这里 8 秒超时后自动重试一次，仍失败则向上抛，由 bootstrap 展示重试卡片。
+ */
 async function readSessionAccount(): Promise<Account | null> {
-  try {
-    const res = await fetch('/api/auth/session', { cache: 'no-store' });
-    const data = (await res.json()) as {
-      user?: { id?: string; name?: string | null; email?: string | null };
-    };
-    const u = data?.user;
-    if (!u?.id) return null;
-    return { id: u.id, username: String(u.name ?? ''), playerNo: 0 };
-  } catch {
-    return null;
+  let lastErr: unknown = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await timeoutFetch('/api/auth/session', { cache: 'no-store' }, 8000);
+      const data = (await res.json()) as {
+        user?: { id?: string; name?: string | null; email?: string | null };
+      };
+      const u = data?.user;
+      if (!u?.id) return null;
+      return { id: u.id, username: String(u.name ?? ''), playerNo: 0 };
+    } catch (e) {
+      lastErr = e;
+      // 第一次超时后稍等一下再试，冷启动 / 弱网抖动有概率恢复
+      await new Promise((r) => setTimeout(r, 600));
+    }
   }
+
+  throw new Error('NETWORK_UNREACHABLE');
 }
 
 /**
@@ -262,8 +278,14 @@ export const useGame = create<GameStore>((set, get) => ({
   hasArchive: false,
   authError: null,
   submitting: false,
+  netError: null,
 
   go: (p) => set({ phase: p }),
+
+  retryBootstrap: () => {
+    set({ netError: null, authReady: false });
+    void get().bootstrap();
+  },
 
   setName: (name) => set((s) => ({ player: { ...s.player, name } })),
 
@@ -394,9 +416,17 @@ export const useGame = create<GameStore>((set, get) => ({
    * ===================================================== */
   bootstrap: async () => {
     // AI 接入配置只存本地，启动时读回内存
-    set({ ai: loadAIConfig() });
+    set({ ai: loadAIConfig(), netError: null });
 
-    const acc = await readSessionAccount();
+    let acc: Account | null = null;
+    try {
+      acc = await readSessionAccount();
+    } catch {
+      // 连不上服务端：别再转圈，直接给出重试卡片
+      set({ authReady: true, netError: 'NETWORK_UNREACHABLE' });
+      return;
+    }
+
     if (!acc) {
       set({ account: null, authReady: true, phase: 'AUTH', hasArchive: false });
       return;

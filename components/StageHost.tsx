@@ -23,6 +23,8 @@ import SettingsView from '@/components/views/SettingsView';
 export default function StageHost() {
   const phase = useGame((s) => s.phase);
   const authReady = useGame((s) => s.authReady);
+  const netError = useGame((s) => s.netError);
+  const retryBootstrap = useGame((s) => s.retryBootstrap);
   const bootstrap = useGame((s) => s.bootstrap);
 
   useEffect(() => {
@@ -48,7 +50,24 @@ export default function StageHost() {
       />
 
       <div className="relative z-10 h-full w-full">
-        {!authReady ? (
+        {netError ? (
+          <div className="flex h-full w-full items-center justify-center px-6">
+            <div className="max-w-md border border-blood-bright/40 bg-void/80 p-6 text-center">
+              <p className="text-[11px] tracking-[0.4em] text-blood-bright">连接失败</p>
+              <p className="mt-4 text-[12px] leading-relaxed text-chalk/70">
+                无法连接到 INSTANCE 服务端。可能是当前网络无法访问该站点，
+                <br />
+                请切换网络（Wi-Fi / 移动数据）后重试。
+              </p>
+              <button
+                onClick={retryBootstrap}
+                className="mt-6 border border-chalk/40 px-6 py-2 text-[11px] tracking-[0.3em] text-chalk/80 transition-colors hover:border-toxic hover:text-toxic"
+              >
+                重新连接
+              </button>
+            </div>
+          </div>
+        ) : !authReady ? (
           <div className="flex h-full w-full items-center justify-center">
             <p className="animate-pulse text-[11px] tracking-[0.5em] text-muted">
               正在校验身份……
