@@ -8,11 +8,13 @@ import type { Token } from '@/types';
  *   【音效】xxx        -> 声波图标 + 斜体
  *   【肢体】xxx        -> 灰色小字旁白
  *   【判定：xxx | d20=n】 -> 骰子系统提示框（成功绿 / 失败红）
+ *   【击杀：xxx】      -> 击杀提示（计入击杀数与积分）
+ *   【掉落：xxx】      -> 掉落提示（武器入库）
  *
  * 未匹配标签的普通正文按段落切分为 text token。
  * ========================================================= */
 
-const TAG_RE = /【\s*(画面|音效|肢体|判定)\s*[:：]?([\s\S]*?)\s*】/g;
+const TAG_RE = /【\s*(画面|音效|肢体|判定|击杀|掉落)\s*[:：]?([\s\S]*?)\s*】/g;
 
 /** 从判定标签正文中提取骰值与成败 */
 function parseCheck(body: string) {
@@ -59,12 +61,14 @@ export function parseNarrative(raw: string): Token[] {
     const before = raw.slice(lastIndex, m.index);
     pushText(tokens, before);
 
-    const tag = m[1] as '画面' | '音效' | '肢体' | '判定';
+    const tag = m[1] as '画面' | '音效' | '肢体' | '判定' | '击杀' | '掉落';
     const body = m[2];
 
     if (tag === '画面') tokens.push({ kind: 'scene', text: body });
     else if (tag === '音效') tokens.push({ kind: 'sound', text: body });
     else if (tag === '肢体') tokens.push({ kind: 'action', text: body });
+    else if (tag === '击杀') tokens.push({ kind: 'kill', text: body });
+    else if (tag === '掉落') tokens.push({ kind: 'loot', text: body });
     else tokens.push({ kind: 'check', ...parseCheck(body), text: body });
 
     lastIndex = m.index + m[0].length;
@@ -87,4 +91,25 @@ function pushText(tokens: Token[], chunk: string) {
 /** 判断一段原始文本里有多少个判定标签（用于统计） */
 export function countChecks(raw: string): number {
   return (raw.match(/【\s*判定/g) ?? []).length;
+}
+
+/* =========================================================
+ * 战利品抽取
+ * ---------------------------------------------------------
+ * LLM 在正文里用【击杀：宿主名】宣告击杀，用【掉落：武器名】宣告掉落。
+ * 这里把两者抽出来，交给 store 结算积分与武器库。
+ * ========================================================= */
+
+/** 一次结算里被击杀的宿主名（去重前，按出现顺序） */
+export function extractKills(raw: string): string[] {
+  return [...raw.matchAll(/【\s*击杀\s*[:：]?\s*([\s\S]*?)\s*】/g)]
+    .map((m) => m[1]?.trim())
+    .filter((s): s is string => !!s);
+}
+
+/** 一次结算里宣告掉落的武器名 */
+export function extractLootNames(raw: string): string[] {
+  return [...raw.matchAll(/【\s*掉落\s*[:：]?\s*([\s\S]*?)\s*】/g)]
+    .map((m) => m[1]?.trim())
+    .filter((s): s is string => !!s);
 }

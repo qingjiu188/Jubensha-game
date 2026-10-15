@@ -1,6 +1,6 @@
 'use client';
 
-import { Bookmark, Clock3, Skull } from 'lucide-react';
+import { Bookmark, Clock3, Skull, Swords } from 'lucide-react';
 import StatBar from '@/components/ui/StatBar';
 import RankBadge from '@/components/ui/RankBadge';
 import { AbilityIcon } from '@/components/ui/AbilityBadge';
@@ -13,6 +13,7 @@ export default function Hud() {
   const account = useGame((s) => s.account);
 
   const gone = (f: string) => destroyed.includes(f);
+  const equipped = (player.weapons ?? []).find((w) => w.id === player.equippedWeaponId) ?? null;
 
   return (
     <header className="panel scanlines relative z-10 flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-hairline px-5 py-3">
@@ -61,6 +62,26 @@ export default function Hud() {
             <div className="leading-tight">
               <p className="text-[9px] tracking-[0.3em] text-muted">ABILITY</p>
               <p className="text-[12px] tracking-[0.12em] text-chalk">{player.ability.name}</p>
+            </div>
+          </div>
+        )}
+
+        {/* 中右：装备中的武器（跨局保留，加成立即生效） */}
+        {equipped && (
+          <div
+            className="flex items-center gap-2.5 border-l border-hairline pl-5"
+            title={`掉落自 ${equipped.from} · 卖出可得 ${equipped.value} 积分`}
+          >
+            <Swords size={14} className="shrink-0 text-amber" />
+            <div className="leading-tight">
+              <p className="text-[9px] tracking-[0.3em] text-muted">WEAPON</p>
+              <p className="text-[12px] tracking-[0.12em] text-chalk">{equipped.name}</p>
+              {equipped.stat && (
+                <p className="text-[10px] tracking-[0.15em] text-amber/80">
+                  {equipped.stat === 'str' ? '武力' : equipped.stat === 'int' ? '智力' : '敏捷'} +
+                  {equipped.bonus}
+                </p>
+              )}
             </div>
           </div>
         )}

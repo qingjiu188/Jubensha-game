@@ -11,7 +11,9 @@ export type Phase =
   | 'GAMEPLAY'
   | 'ENDING'
   | 'COMMUNITY'
-  | 'SOCIAL';
+  | 'SOCIAL'
+  | 'SHOP'
+  | 'SETTINGS';
 
 /** 登录态 */
 export interface SessionUser {
@@ -77,6 +79,16 @@ export interface PlayerState extends PlayerVitals, PlayerStats {
   turn: number;
   /** 未分配的成长点（仅由完成副本发放，角色层，死亡清零） */
   growthPoints: number;
+  /** 积分（商城唯一货币） */
+  credits: number;
+  /** 恢复剂存量 */
+  potions: { sp: number; st: number };
+  /** 武器库 */
+  weapons: Weapon[];
+  /** 装备中的武器 id */
+  equippedWeaponId: string | null;
+  /** 本局击杀数 */
+  kills: number;
   /** 随机异能：终身锁定，死亡后重新随机 */
   ability?: AbilitySnapshot | null;
 }
@@ -102,6 +114,48 @@ export interface Difficulty {
   danger: boolean;
 }
 
+/* ---------- 货币 / 战利品 ---------- */
+
+/** 恢复剂种类：精神 / 体力（商城仅售这两种，均不回血） */
+export type PotionKind = 'sp' | 'st';
+
+/** 一罐恢复剂恢复的点数 */
+export const POTION_HEAL = 33;
+/** 一罐恢复剂的售价（积分） */
+export const POTION_PRICE = 500;
+/** 击杀一个宿主发放的积分 */
+export const KILL_CREDITS = 120;
+/** 击杀后掉落宿主武器的概率 */
+export const DROP_RATE = 0.35;
+
+/** 武器（杀怪概率掉落，装备后提供判定加成，跨局保留，死亡随角色销毁） */
+export interface Weapon {
+  id: string;
+  name: string;
+  /** 掉落来源（怪物名） */
+  from: string;
+  /** 加成属性：null 表示只作用于剧情描述 */
+  stat: 'str' | 'int' | 'agi' | null;
+  /** 加成数值 */
+  bonus: number;
+  /** 卖出可得积分 */
+  value: number;
+}
+
+/** 武器加成档位（掉落时随机） */
+export const WEAPON_TIERS: { stat: Weapon['stat']; bonus: number; value: number }[] = [
+  { stat: 'str', bonus: 1, value: 180 },
+  { stat: 'str', bonus: 2, value: 260 },
+  { stat: 'str', bonus: 3, value: 380 },
+  { stat: 'int', bonus: 1, value: 180 },
+  { stat: 'int', bonus: 2, value: 260 },
+  { stat: 'int', bonus: 3, value: 380 },
+  { stat: 'agi', bonus: 1, value: 180 },
+  { stat: 'agi', bonus: 2, value: 260 },
+  { stat: 'agi', bonus: 3, value: 380 },
+  { stat: null, bonus: 0, value: 150 },
+];
+
 /* ---------- 日志流 ---------- */
 
 export type LogRole = 'system' | 'narration' | 'player' | 'result';
@@ -124,6 +178,10 @@ export type Token =
   | { kind: 'scene'; text: string }
   | { kind: 'sound'; text: string }
   | { kind: 'action'; text: string }
+  /** 击杀宿主：正文标签【击杀：xxx】 */
+  | { kind: 'kill'; text: string }
+  /** 掉落武器：正文标签【掉落：xxx】 */
+  | { kind: 'loot'; text: string }
   | {
       kind: 'check';
       /** 判定项名称，如「力量」 */
@@ -140,6 +198,13 @@ export type Token =
 
 /* ---------- API ---------- */
 
+/** 玩家自带的 AI 配置（随请求发给后端代理，服务端不落库） */
+export interface PlayerAIConfig {
+  apiKey: string;
+  endpoint?: string;
+  model?: string;
+}
+
 export interface SendActionPayload {
   playerState: PlayerState;
   userInput: string;
@@ -147,6 +212,11 @@ export interface SendActionPayload {
   difficulty: DifficultyId;
   /** 近期对话，供 LLM 保持上下文 */
   history: { role: 'system' | 'player'; content: string }[];
+  /** 玩家自带 AI 密钥（优先级高于服务端环境变量） */
+  ai?: PlayerAIConfig | null;
+  /** 剧本标题与背景（AI 生成剧情时只固定背景） */
+  scenarioTitle?: string;
+  scenarioBlurb?: string;
 }
 
 export interface SendActionResult {

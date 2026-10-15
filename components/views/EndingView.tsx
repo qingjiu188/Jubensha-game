@@ -21,6 +21,7 @@ function GoodEnding({ type }: { type: 'HE' | 'NE' }) {
   const player = useGame((s) => s.player);
   const reset = useGame((s) => s.reset);
   const reward = useGame((s) => s.lastReward);
+  const payout = useGame((s) => s.lastPayout);
   const he = type === 'HE';
 
   const truth = he
@@ -80,8 +81,17 @@ function GoodEnding({ type }: { type: 'HE' | 'NE' }) {
             <p className="mt-1 text-[10px] tracking-[0.2em] text-amber/70">
               回主界面可分配（1 点 = 属性 +1，无上限）
             </p>
+            <p className="mt-2 text-[10px] tracking-[0.3em] text-muted">CREDITS / 积分</p>
+            <p className="font-serif text-xl text-amber">+{payout}</p>
+            <p className="text-[10px] tracking-[0.2em] text-amber/70">
+              击杀 {player.kills ?? 0} · 账户 {player.credits ?? 0}
+            </p>
           </div>
         </div>
+
+        <p className="mt-3 text-center text-[10px] tracking-[0.2em] text-muted/70">
+          离开副本：生命 / 精神 / 体力已全部恢复至 100。
+        </p>
 
         <div className="mt-6 w-56">
           <TerminalButton onClick={reset} prefix="[→]">

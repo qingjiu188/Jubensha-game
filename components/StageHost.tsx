@@ -13,6 +13,8 @@ import GameplayView from '@/components/views/GameplayView';
 import EndingView from '@/components/views/EndingView';
 import CommunityView from '@/components/views/CommunityView';
 import SocialView from '@/components/views/SocialView';
+import ShopView from '@/components/views/ShopView';
+import SettingsView from '@/components/views/SettingsView';
 
 /**
  * 状态机宿主：按 phase 切换视图，不做任何路由跳转。
@@ -70,6 +72,8 @@ export default function StageHost() {
               {phase === 'ENDING' && <EndingView />}
               {phase === 'COMMUNITY' && <CommunityView />}
               {phase === 'SOCIAL' && <SocialView />}
+              {phase === 'SHOP' && <ShopView />}
+              {phase === 'SETTINGS' && <SettingsView />}
             </motion.div>
           </AnimatePresence>
         )}

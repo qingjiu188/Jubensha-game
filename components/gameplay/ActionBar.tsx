@@ -2,15 +2,19 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Send } from 'lucide-react';
+import { FlaskConical, Lock, Send } from 'lucide-react';
 import TerminalButton from '@/components/ui/TerminalButton';
 import { useGame } from '@/store/gameStore';
+import { POTION_HEAL } from '@/types';
 
 export default function ActionBar() {
   const options = useGame((s) => s.options);
   const submit = useGame((s) => s.submitAction);
   const busy = useGame((s) => s.busy);
+  const player = useGame((s) => s.player);
+  const usePotion = useGame((s) => s.usePotion);
   const [custom, setCustom] = useState('');
+  const potions = player.potions ?? { sp: 0, st: 0 };
 
   const send = async (v: string) => {
     if (busy || !v.trim()) return;
@@ -57,6 +61,32 @@ export default function ActionBar() {
           <Send size={13} />
           发送
         </button>
+      </div>
+
+      {/* 副本内的道具栏：只有恢复剂可用，回血手段一律锁死 */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
+        <button
+          onClick={() => usePotion('sp')}
+          disabled={busy || (potions.sp ?? 0) <= 0}
+          title={`精神值 +${POTION_HEAL}`}
+          className="inline-flex items-center gap-1.5 border border-toxic/50 px-2.5 py-1 text-[10px] tracking-[0.2em] text-toxic transition-colors hover:bg-toxic/10 disabled:cursor-not-allowed disabled:border-hairline disabled:text-muted/40"
+        >
+          <FlaskConical size={11} />
+          精神恢复剂 ×{potions.sp ?? 0}
+        </button>
+        <button
+          onClick={() => usePotion('st')}
+          disabled={busy || (potions.st ?? 0) <= 0}
+          title={`体力值 +${POTION_HEAL}`}
+          className="inline-flex items-center gap-1.5 border border-amber/50 px-2.5 py-1 text-[10px] tracking-[0.2em] text-amber transition-colors hover:bg-amber/10 disabled:cursor-not-allowed disabled:border-hairline disabled:text-muted/40"
+        >
+          <FlaskConical size={11} />
+          体力恢复剂 ×{potions.st ?? 0}
+        </button>
+        <span className="inline-flex items-center gap-1.5 text-[10px] tracking-[0.2em] text-blood-bright/70">
+          <Lock size={11} />
+          生命值在副本内锁定 · 无法退出
+        </span>
       </div>
 
       {busy && (

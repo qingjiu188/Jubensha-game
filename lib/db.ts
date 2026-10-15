@@ -20,6 +20,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
+import type { Weapon } from '@/types';
 
 /* ---------------- 类型 ---------------- */
 
@@ -50,6 +51,16 @@ export interface DbArchive {
   st: number;
   rating: string;
   growthPoints: number;
+  /** 积分（商城货币） */
+  credits: number;
+  /** 恢复剂存量 { sp, st } */
+  potions: { sp: number; st: number };
+  /** 武器库 */
+  weapons: Weapon[];
+  /** 装备中的武器 id */
+  equippedWeaponId: string | null;
+  /** 累计击杀 */
+  kills: number;
   abilityName: string;
   abilityDesc: string;
   abilityRarity: string;
@@ -174,6 +185,11 @@ function normalizeStore(raw: Partial<JsonStore>): JsonStore {
       abilityName: a.abilityName ?? '—',
       abilityDesc: a.abilityDesc ?? '',
       abilityRarity: a.abilityRarity ?? 'common',
+      credits: Number(a.credits) || 0,
+      potions: normalizePotions(a.potions),
+      weapons: normalizeWeapons(a.weapons),
+      equippedWeaponId: typeof a.equippedWeaponId === 'string' ? a.equippedWeaponId : null,
+      kills: Number(a.kills) || 0,
       currentClues: Array.isArray(a.currentClues) ? a.currentClues : [],
     })) as DbArchive[],
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -222,6 +238,28 @@ async function writeStore(next: JsonStore): Promise<void> {
 }
 
 const now = () => new Date().toISOString();
+
+/** JSON 字段归零化：兼容缺失 / 脏数据 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizePotions(raw: any): { sp: number; st: number } {
+  const sp = Number(raw?.sp);
+  const st = Number(raw?.st);
+  return { sp: Number.isFinite(sp) && sp > 0 ? Math.floor(sp) : 0, st: Number.isFinite(st) && st > 0 ? Math.floor(st) : 0 };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeWeapons(raw: any): Weapon[] {
+  if (!Array.isArray(raw)) return [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return raw.filter((w: any) => w && typeof w.name === 'string').map((w: any) => ({
+    id: String(w.id ?? randomUUID()),
+    name: String(w.name),
+    from: String(w.from ?? '未知'),
+    stat: w.stat === 'str' || w.stat === 'int' || w.stat === 'agi' ? w.stat : null,
+    bonus: Number(w.bonus) || 0,
+    value: Number(w.value) || 150,
+  }));
+}
 
 /* ---------------- Prisma 探测 ---------------- */
 
@@ -334,7 +372,12 @@ function mapArchive(a: any): DbArchive {
     sp: a.sp,
     st: a.st,
     rating: a.rating,
-    growthPoints: a.growthPoints,
+    growthPoints: Number(a.growthPoints) || 0,
+    credits: Number(a.credits) || 0,
+    potions: normalizePotions(a.potions),
+    weapons: normalizeWeapons(a.weapons),
+    equippedWeaponId: typeof a.equippedWeaponId === 'string' ? a.equippedWeaponId : null,
+    kills: Number(a.kills) || 0,
     abilityName: a.abilityName ?? '—',
     abilityDesc: a.abilityDesc ?? '',
     abilityRarity: a.abilityRarity ?? 'common',
@@ -575,6 +618,11 @@ export async function createArchive(input: ArchiveCreateInput): Promise<DbArchiv
         st: input.st,
         rating: input.rating,
         growthPoints: input.growthPoints,
+        credits: input.credits ?? 0,
+        potions: input.potions ?? { sp: 0, st: 0 },
+        weapons: input.weapons ?? [],
+        equippedWeaponId: input.equippedWeaponId ?? null,
+        kills: input.kills ?? 0,
         abilityName: input.abilityName,
         abilityDesc: input.abilityDesc,
         abilityRarity: input.abilityRarity,
@@ -657,6 +705,10 @@ export async function wipeField(userId: string, field: keyof DbArchive): Promise
     st: { st: 0 },
     rating: { rating: '—' },
     growthPoints: { growthPoints: 0 },
+    credits: { credits: 0 },
+    potions: { potions: { sp: 0, st: 0 } },
+    weapons: { weapons: [], equippedWeaponId: null },
+    kills: { kills: 0 },
     currentClues: { currentClues: [] },
     currentRole: { currentRole: null },
     difficulty: { difficulty: null },

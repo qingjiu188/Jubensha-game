@@ -14,10 +14,22 @@ import type {
   Token,
 } from '@/types';
 import { STAT_BASE_MAX } from '@/types';
-import { parseNarrative } from '@/lib/parser';
+import { extractKills, extractLootNames, parseNarrative } from '@/lib/parser';
 import { rankOf, totalScore } from '@/lib/rank';
 import { rollIdentity } from '@/lib/abilities';
 import type { IdentityEntry } from '@/lib/identities';
+import {
+  POTION_PRICE,
+  abilityHealsHp,
+  clearCredits,
+  consumePotion,
+  rollWeaponDrop,
+  sanitizePotions,
+  sanitizeWeapons,
+} from '@/lib/loot';
+import { loadAIConfig, saveAIConfig } from '@/lib/aiConfig';
+import type { PlayerAIConfig, PotionKind, Weapon } from '@/types';
+import { DROP_RATE, KILL_CREDITS } from '@/types';
 import { sendAction } from '@/lib/api';
 import {
   createArchive as apiCreateArchive,
@@ -64,12 +76,16 @@ interface GameStore {
   endingTitle: string;
   /** 上一次通关发放的成长点（结算页展示用） */
   lastReward: number;
+  /** 上一次通关发放的积分（结算页展示用） */
+  lastPayout: number;
   /** 已被占用的身份（全局唯一） */
   takenIdentities: string[];
   /** 剩余可分发的身份数 */
   identityRemaining: number;
   /** BE 销毁动画已经抹除的字段 */
   destroyed: string[];
+  /** 玩家自带的 AI 接入配置（仅存本地，后端代理不落库） */
+  ai: PlayerAIConfig | null;
 
   /* ---------- 登录态（账号层，死亡不清零） ---------- */
   account: Account | null;
@@ -88,6 +104,16 @@ interface GameStore {
   rollStats: () => void;
   /** 消耗 1 点成长点，给指定属性 +1（无上限） */
   spendPoint: (key: StatKey) => void;
+  /** 商城：花 500 积分买一罐恢复剂 */
+  buyPotion: (kind: PotionKind) => boolean;
+  /** 使用一罐恢复剂（副本内也可用，只回 SP / ST，不回血） */
+  usePotion: (kind: PotionKind) => boolean;
+  /** 卖出武器换积分 */
+  sellWeapon: (id: string) => void;
+  /** 装备 / 卸下武器 */
+  equipWeapon: (id: string | null) => void;
+  /** 写入 / 清空玩家自带的 AI 接入配置 */
+  setAI: (cfg: PlayerAIConfig | null) => void;
   bootstrap: () => Promise<void>;
   login: (username: string, key: string) => Promise<void>;
   register: (username: string, key: string) => Promise<void>;
@@ -119,6 +145,11 @@ const EMPTY_PLAYER: PlayerState = {
   clueTotal: 5,
   turn: 0,
   growthPoints: 0,
+  credits: 0,
+  potions: { sp: 0, st: 0 },
+  weapons: [],
+  equippedWeaponId: null,
+  kills: 0,
   ability: null,
 };
 
@@ -156,6 +187,11 @@ function hydrate(a: DbArchive): PlayerState {
     clueTotal: 5,
     turn: a.turn ?? 0,
     growthPoints: Number(a.growthPoints) || 0,
+    credits: Number(a.credits) || 0,
+    potions: sanitizePotions(a.potions),
+    weapons: sanitizeWeapons(a.weapons),
+    equippedWeaponId: typeof a.equippedWeaponId === 'string' ? a.equippedWeaponId : null,
+    kills: Number(a.kills) || 0,
     ability: a.abilityName && a.abilityName !== '—'
       ? {
           name: a.abilityName,
@@ -215,9 +251,11 @@ export const useGame = create<GameStore>((set, get) => ({
   ending: 'NE',
   endingTitle: '',
   lastReward: 0,
+  lastPayout: 0,
   takenIdentities: [],
   identityRemaining: 0,
   destroyed: [],
+  ai: null,
 
   account: null,
   authReady: false,
@@ -285,9 +323,79 @@ export const useGame = create<GameStore>((set, get) => ({
   },
 
   /* =======================================================
+   * 商城 / 战利品
+   * ===================================================== */
+
+  buyPotion: (kind) => {
+    const s = get();
+    if ((s.player.credits ?? 0) < POTION_PRICE) return false;
+    const player: PlayerState = {
+      ...s.player,
+      credits: s.player.credits - POTION_PRICE,
+      potions: { ...s.player.potions, [kind]: (s.player.potions[kind] ?? 0) + 1 },
+    };
+    set({ player });
+    void patchArchive({ credits: player.credits, potions: player.potions });
+    return true;
+  },
+
+  usePotion: (kind) => {
+    const s = get();
+    const used = consumePotion(s.player.potions, kind);
+    if (!used) return false;
+
+    const player: PlayerState = { ...s.player, potions: used.potions };
+    // 恢复剂只作用于对应资源条，永远不回血
+    if (kind === 'sp') player.sp = Math.min(100, player.sp + used.healed);
+    else player.st = Math.min(100, player.st + used.healed);
+    set({ player });
+    void patchArchive({
+      potions: player.potions,
+      sp: player.sp,
+      st: player.st,
+    });
+    return true;
+  },
+
+  sellWeapon: (id) => {
+    const s = get();
+    const w = s.player.weapons.find((x) => x.id === id);
+    if (!w) return;
+    const player: PlayerState = {
+      ...s.player,
+      credits: (s.player.credits ?? 0) + w.value,
+      weapons: s.player.weapons.filter((x) => x.id !== id),
+      equippedWeaponId: s.player.equippedWeaponId === id ? null : s.player.equippedWeaponId,
+    };
+    set({ player });
+    void patchArchive({
+      credits: player.credits,
+      weapons: player.weapons,
+      equippedWeaponId: player.equippedWeaponId,
+    });
+  },
+
+  equipWeapon: (id) => {
+    const s = get();
+    const ok = id === null || s.player.weapons.some((w) => w.id === id);
+    if (!ok) return;
+    const player: PlayerState = { ...s.player, equippedWeaponId: id };
+    set({ player });
+    void patchArchive({ equippedWeaponId: id });
+  },
+
+  setAI: (cfg) => {
+    saveAIConfig(cfg);
+    set({ ai: cfg });
+  },
+
+  /* =======================================================
    * 启动：读 session → 查档案 → 决定落到哪个视图
    * ===================================================== */
   bootstrap: async () => {
+    // AI 接入配置只存本地，启动时读回内存
+    set({ ai: loadAIConfig() });
+
     const acc = await readSessionAccount();
     if (!acc) {
       set({ account: null, authReady: true, phase: 'AUTH', hasArchive: false });
@@ -469,6 +577,10 @@ export const useGame = create<GameStore>((set, get) => ({
         scenarioId: st.scenario.id,
         difficulty: st.difficulty,
         history,
+        // 玩家自带密钥随请求走后端代理，服务端不落库
+        ai: get().ai,
+        scenarioTitle: st.scenario.title,
+        scenarioBlurb: st.scenario.blurb,
       });
     } catch {
       const after0 = get();
@@ -482,53 +594,121 @@ export const useGame = create<GameStore>((set, get) => ({
     const after = get();
     let logs = pushLog(after.logs, 'narration', result.narrative);
 
-    // 应用状态补丁：patch 里的 hp/sp/st 是增量，落库存绝对值
+    /**
+     * 应用状态补丁：patch 里的 hp/sp/st 是增量，落库存绝对值。
+     * 生存规则：副本内 HP 不可恢复（异能具备治疗语义时例外）。
+     */
     const patch = result.patch ?? {};
+    const v0 = (n: number) => Math.max(0, Math.min(100, n));
+    const hpDelta = patch.hp ?? 0;
+    const hpApplied = hpDelta > 0 && !abilityHealsHp(after.player.ability) ? 0 : hpDelta;
+
     const player: PlayerState = {
       ...after.player,
       ...patch,
-      hp: Math.max(0, Math.min(100, after.player.hp + (patch.hp ?? 0))),
-      sp: Math.max(0, Math.min(100, after.player.sp + (patch.sp ?? 0))),
-      st: Math.max(0, Math.min(100, after.player.st + (patch.st ?? 0))),
+      hp: v0(after.player.hp + hpApplied),
+      sp: v0(after.player.sp + (patch.sp ?? 0)),
+      st: v0(after.player.st + (patch.st ?? 0)),
       clues: Math.max(0, patch.clues ?? after.player.clues),
       turn: patch.turn ?? after.player.turn + 1,
+      // 击杀与积分是增量累计（掉落由解析器标签给出）
+      credits: Math.max(0, after.player.credits + (patch.credits ?? 0)),
+      kills: Math.max(0, after.player.kills + (patch.kills ?? 0)),
+      weapons: sanitizeWeapons(patch.weapons ?? after.player.weapons),
+      potions: sanitizePotions(patch.potions ?? after.player.potions),
     };
+    if (hpApplied !== hpDelta) {
+      logs = pushLog(
+        logs,
+        'system',
+        '>> 生命值在副本内无法回复。只有离开副本才会恢复。',
+      );
+    }
 
-    if (result.ending) {
+    /* ---- 击杀结算：发积分 + 概率掉落宿主身上的武器 ---- */
+    const killNames = extractKills(result.narrative);
+    if (killNames.length > 0) {
+      player.kills = player.kills + killNames.length;
+      player.credits = player.credits + killNames.length * KILL_CREDITS;
+      for (const host of killNames) {
+        if (Math.random() < DROP_RATE) {
+          player.weapons = [...player.weapons, rollWeaponDrop(host)];
+        }
+      }
+    }
+    // 显式掉落标签：LLM 点名的武器直接入库（属性档位仍随机）
+    for (const name of extractLootNames(result.narrative)) {
+      const w = rollWeaponDrop(name);
+      player.weapons = [...player.weapons, { ...w, name: name.slice(0, 24) }];
+    }
+    if (player.weapons.length > 40) player.weapons = player.weapons.slice(-40);
+
+    /* ---- 死亡判定：HP 或 SP 归零即强制 BadEnding ---- */
+    let ending = result.ending;
+    let endingTitle = result.endingTitle ?? '';
+    const dead = player.hp <= 0 || player.sp <= 0;
+    if (dead) {
+      ending = 'BE';
+      endingTitle =
+        player.hp <= 0 ? 'BAD END · 生命体征归零' : 'BAD END · 精神彻底崩解';
+      player.hp = Math.min(player.hp, 0);
+      player.sp = Math.min(player.sp, 0);
+    } else if (ending && ending !== 'BE') {
+      // 离开副本：生命 / 精神 / 体力全部恢复满
+      player.hp = 100;
+      player.sp = 100;
+      player.st = 100;
+    }
+
+    if (ending) {
       logs = [
         ...logs,
         {
           id: uid(),
           role: 'result',
-          raw: result.endingTitle ?? '结局',
-          tokens: [{ kind: 'text', text: result.endingTitle ?? '结局' }],
+          raw: endingTitle || '结局',
+          tokens: [{ kind: 'text', text: endingTitle || '结局' }],
         },
       ];
     }
 
-    // 通关结算：发放成长点（BE 死亡不发，档案随后被销毁）
-    const reward = result.ending ? growthReward(result.ending, st.difficulty) : 0;
+    // 通关结算：发放成长点与积分（BE 死亡不发，档案随后被销毁）
+    const reward = ending ? growthReward(ending, st.difficulty) : 0;
     if (reward > 0) player.growthPoints = player.growthPoints + reward;
+    const payout = ending ? clearCredits(ending, st.difficulty) : 0;
+    if (payout > 0) player.credits = player.credits + payout;
 
-    set({ logs, player, options: result.options, busy: false, lastReward: reward });
+    set({
+      logs,
+      player,
+      options: result.options,
+      busy: false,
+      lastReward: reward,
+      lastPayout: payout,
+    });
 
-    // 同步到数据库（HP / SP / ST / 线索 / 回合 / 成长点 / 当前剧本）
+    // 同步到数据库（HP / SP / ST / 线索 / 回合 / 成长点 / 战利品 / 当前剧本）
     void patchArchive({
       hp: player.hp,
       sp: player.sp,
       st: player.st,
       turn: player.turn,
       growthPoints: player.growthPoints,
+      credits: player.credits,
+      potions: player.potions,
+      weapons: player.weapons,
+      equippedWeaponId: player.equippedWeaponId,
+      kills: player.kills,
       currentClues: Array.from({ length: player.clues }, (_, i) => `clue-${i + 1}`),
       scenarioId: after.scenario?.id ?? null,
       scenarioName: after.scenario?.title ?? null,
       currentRole: player.role,
       difficulty: get().difficulty,
-      status: result.ending === 'BE' ? 'dead' : 'alive',
+      status: ending === 'BE' ? 'dead' : 'alive',
     });
 
-    if (result.ending) {
-      set({ ending: result.ending, endingTitle: result.endingTitle ?? '', phase: 'ENDING' });
+    if (ending) {
+      set({ ending, endingTitle, phase: 'ENDING' });
     }
   },
 

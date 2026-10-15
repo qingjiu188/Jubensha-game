@@ -74,6 +74,18 @@ model Archive {
   rating       String
   growthPoints Int    @default(0)
 
+  /* ---------- 货币与战利品（角色层，死亡随档案销毁） ---------- */
+  /// 积分：商城唯一货币
+  credits Int @default(0)
+  /// 恢复剂存量：{ "sp": 罐数, "st": 罐数 }
+  potions Json?
+  /// 武器库：[{ id, name, from, stat, bonus, value }]
+  weapons Json?
+  /// 当前装备的武器 id
+  equippedWeaponId String?
+  /// 本局累计击杀数（结算展示）
+  kills Int @default(0)
+
   /* ---------- 随机异能：建档时随机，终身锁定 ---------- */
   abilityName   String
   abilityDesc   String

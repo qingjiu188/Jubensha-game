@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { STAT_BASE_MAX } from '@/types';
+import { sanitizePotions, sanitizeWeapons } from '@/lib/loot';
 import {
   createArchive,
   deleteArchive,
@@ -103,31 +104,45 @@ export async function POST(req: Request) {
     rarity: picked.rarity,
   };
 
-  const archive = await createArchive({
-    userId,
-    username,
-    identity: picked.identity,
-    identityCategory: picked.category,
-    // 初始三维：0~100（闭区间）。超过 100 的部分只允许通过成长点累积，不能在建档时写入
-    str: clamp(Number(body.str ?? 50), 0, STAT_BASE_MAX),
-    int: clamp(Number(body.int ?? 50), 0, STAT_BASE_MAX),
-    agi: clamp(Number(body.agi ?? 50), 0, STAT_BASE_MAX),
-    hp: clamp(Number(body.hp ?? 100)),
-    sp: clamp(Number(body.sp ?? 100)),
-    st: clamp(Number(body.st ?? 100)),
-    rating: String(body.rating ?? 'F'),
-    growthPoints: Number(body.growthPoints ?? 0),
-    abilityName: bound.name,
-    abilityDesc: bound.desc,
-    abilityRarity: bound.rarity,
-    status: 'alive',
-    currentClues: Array.isArray(body.currentClues) ? (body.currentClues as string[]) : [],
-    difficulty: body.difficulty ?? null,
-    scenarioId: body.scenarioId ?? null,
-    scenarioName: body.scenarioName ?? null,
-    currentRole: body.currentRole ?? null,
-    turn: Number(body.turn ?? 0),
-  });
+  let archive: DbArchive;
+  try {
+    archive = await createArchive({
+      userId,
+      username,
+      identity: picked.identity,
+      identityCategory: picked.category,
+      // 初始三维：0~100（闭区间）。超过 100 的部分只允许通过成长点累积，不能在建档时写入
+      str: clamp(Number(body.str ?? 50), 0, STAT_BASE_MAX),
+      int: clamp(Number(body.int ?? 50), 0, STAT_BASE_MAX),
+      agi: clamp(Number(body.agi ?? 50), 0, STAT_BASE_MAX),
+      hp: clamp(Number(body.hp ?? 100)),
+      sp: clamp(Number(body.sp ?? 100)),
+      st: clamp(Number(body.st ?? 100)),
+      rating: String(body.rating ?? 'F'),
+      growthPoints: Number(body.growthPoints ?? 0),
+      // 新档案的货币与战利品一律从零起算，防止前端伪造初始资源
+      credits: 0,
+      potions: { sp: 0, st: 0 },
+      weapons: [],
+      equippedWeaponId: null,
+      kills: 0,
+      abilityName: bound.name,
+      abilityDesc: bound.desc,
+      abilityRarity: bound.rarity,
+      status: 'alive',
+      currentClues: Array.isArray(body.currentClues) ? (body.currentClues as string[]) : [],
+      difficulty: body.difficulty ?? null,
+      scenarioId: body.scenarioId ?? null,
+      scenarioName: body.scenarioName ?? null,
+      currentRole: body.currentRole ?? null,
+      turn: Number(body.turn ?? 0),
+    });
+  } catch (e) {
+    return NextResponse.json(
+      { error: 'ARCHIVE_CREATE_FAILED', detail: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
+  }
 
   const user = await findUserById(userId);
 
@@ -169,6 +184,19 @@ export async function PATCH(req: Request) {
   if (typeof patch.agi === 'number') patch.agi = Math.max(0, Math.floor(patch.agi));
   if (typeof patch.growthPoints === 'number')
     patch.growthPoints = Math.max(0, Math.floor(patch.growthPoints));
+  // 货币 / 战利品：积分与击杀只挡负数，药剂与武器做结构消毒，防止伪造
+  if (typeof patch.credits === 'number') patch.credits = Math.max(0, Math.floor(patch.credits));
+  if (typeof patch.kills === 'number') patch.kills = Math.max(0, Math.floor(patch.kills));
+  if (patch.potions) patch.potions = sanitizePotions(patch.potions);
+  if (Array.isArray(patch.weapons)) patch.weapons = sanitizeWeapons(patch.weapons);
+  if (typeof patch.equippedWeaponId === 'string' && Array.isArray(patch.weapons)) {
+    // 只允许装备自己库里真实存在的武器
+    patch.equippedWeaponId = patch.weapons.some((w) => w.id === patch.equippedWeaponId)
+      ? patch.equippedWeaponId
+      : null;
+  } else if ('equippedWeaponId' in patch && patch.equippedWeaponId !== null) {
+    patch.equippedWeaponId = null;
+  }
 
   const archive = await updateArchive(userId, patch);
   if (!archive) return NextResponse.json({ error: 'ARCHIVE_NOT_FOUND' }, { status: 404 });

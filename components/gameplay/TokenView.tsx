@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { AudioLines, Camera, Dices, Quote } from 'lucide-react';
+import { AudioLines, Camera, Dices, PackageOpen, Quote, Skull } from 'lucide-react';
 import Typewriter from '@/components/ui/Typewriter';
 import type { Token } from '@/types';
 
@@ -93,6 +93,34 @@ export default function TokenView({ token, animate, onDone }: { token: Token; an
         </motion.div>
       );
     }
+
+    /* ---------- 击杀：宿主已清除 ---------- */
+    case 'kill':
+      return (
+        <motion.div
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="my-2 inline-flex items-center gap-2 border border-blood/60 bg-blood/[0.10] px-3 py-1.5"
+        >
+          <Skull size={13} className="text-blood-bright" />
+          <span className="text-[10px] tracking-[0.25em] text-blood-bright">KILL</span>
+          <span className="text-[11px] text-chalk/80">{token.text}</span>
+        </motion.div>
+      );
+
+    /* ---------- 掉落：武器入库 ---------- */
+    case 'loot':
+      return (
+        <motion.div
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="my-2 inline-flex items-center gap-2 border border-amber/60 bg-amber/[0.08] px-3 py-1.5"
+        >
+          <PackageOpen size={13} className="text-amber" />
+          <span className="text-[10px] tracking-[0.25em] text-amber">DROP</span>
+          <span className="text-[11px] text-chalk/80">{token.text}</span>
+        </motion.div>
+      );
 
     /* ---------- 普通正文 ---------- */
     default:

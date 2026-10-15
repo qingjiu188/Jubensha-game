@@ -2,7 +2,18 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LogOut, MessagesSquare, Play, Plus, Radio, ScrollText, User } from 'lucide-react';
+import {
+  Coins,
+  LogOut,
+  MessagesSquare,
+  Play,
+  Plus,
+  Radio,
+  ScrollText,
+  Settings,
+  ShoppingBag,
+  User,
+} from 'lucide-react';
 import GlitchText from '@/components/ui/GlitchText';
 import TerminalButton from '@/components/ui/TerminalButton';
 import StatBar from '@/components/ui/StatBar';
@@ -13,11 +24,14 @@ const RULES = [
   '每次只推进一个回合。你输入什么，系统就裁定什么。',
   '三维初始值 0~100。建档后只能消耗成长点提升，没有上限。',
   '成长点仅由通关副本发放（HE > NE，难度越高越多），角色死亡即清零。',
-  'HP 归零即档案销毁：角色代号、三维、异能、线索、成长点全部清除。',
+  '生命值在副本内无法恢复（除非异能本身能治），只有离开副本才会回满。',
+  '生命值或精神值归零即死亡，强制触发 BadEnding，档案随即销毁。',
+  '副本无法自行退出 —— 只有走到结局才会被释放。',
+  '体力与精神可以靠商城的恢复剂补，但生命值买不到。',
+  '积分来源：通关副本、击杀宿主、卖出武器。500 积分一罐恢复剂。',
+  '武器由击杀概率掉落，装备后跨局保留，死亡随档案销毁。',
   '账号与你在论坛、频道留下的一切不受死亡影响。',
-  'SP 低于 30 时，你看到的描述开始不可靠；但真实线索不会因此改变。',
-  '判定公式：d20 + ⌊属性/10⌋ + 情境修正（含异能加成）≥ 目标值。',
-  '你可以随时放弃本局，但放弃同样会被记录。',
+  '判定公式：d20 + ⌊属性/10⌋ + 情境修正（含异能 / 武器加成）≥ 目标值。',
 ];
 
 const STAT_ROWS: { key: StatKey; label: string; color: 'amber' | 'toxic' }[] = [
@@ -66,6 +80,12 @@ export default function LobbyView() {
             </>
           ) : (
             '未登录'
+          )}
+          {hasArchive && (
+            <span className="ml-1 inline-flex items-center gap-1 border border-amber/50 px-1.5 py-0.5 text-amber">
+              <Coins size={10} />
+              {player.credits ?? 0}
+            </span>
           )}
         </span>
         <button
@@ -116,10 +136,20 @@ export default function LobbyView() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.33, duration: 0.45 }}
           >
-            <TerminalButton prefix="[2]" onClick={() => go('COMMUNITY')} variant="ghost">
+            <TerminalButton
+              prefix="[2]"
+              onClick={() => hasArchive && go('SHOP')}
+              variant={hasArchive ? 'default' : 'ghost'}
+            >
               <span className="inline-flex items-center gap-2">
-                <MessagesSquare size={13} className="opacity-60" />
-                暗网论坛
+                <ShoppingBag size={13} className="opacity-60" />
+                商城
+                {hasArchive && (
+                  <span className="inline-flex items-center gap-1 text-amber">
+                    <Coins size={11} />
+                    {player.credits ?? 0}
+                  </span>
+                )}
               </span>
             </TerminalButton>
           </motion.div>
@@ -129,10 +159,36 @@ export default function LobbyView() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.33, duration: 0.45 }}
           >
-            <TerminalButton prefix="[3]" onClick={() => go('SOCIAL')} variant="ghost">
+            <TerminalButton prefix="[3]" onClick={() => go('COMMUNITY')} variant="ghost">
+              <span className="inline-flex items-center gap-2">
+                <MessagesSquare size={13} className="opacity-60" />
+                暗网论坛
+              </span>
+            </TerminalButton>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.38, duration: 0.45 }}
+          >
+            <TerminalButton prefix="[4]" onClick={() => go('SOCIAL')} variant="ghost">
               <span className="inline-flex items-center gap-2">
                 <Radio size={13} className="opacity-60" />
                 幸存者频道
+              </span>
+            </TerminalButton>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, x: 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.38, duration: 0.45 }}
+          >
+            <TerminalButton prefix="[5]" onClick={() => go('SETTINGS')} variant="ghost">
+              <span className="inline-flex items-center gap-2">
+                <Settings size={13} className="opacity-60" />
+                接入设置
               </span>
             </TerminalButton>
           </motion.div>
@@ -145,7 +201,7 @@ export default function LobbyView() {
             transition={{ delay: 0.41, duration: 0.45 }}
           >
             <TerminalButton
-              prefix="[4]"
+              prefix="[6]"
               onClick={() => setGrowth((v) => !v)}
               variant={points > 0 ? 'default' : 'ghost'}
             >
@@ -165,7 +221,7 @@ export default function LobbyView() {
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.48, duration: 0.45 }}
         >
-          <TerminalButton prefix="[5]" onClick={() => setRules((v) => !v)} variant="ghost">
+          <TerminalButton prefix="[7]" onClick={() => setRules((v) => !v)} variant="ghost">
             <span className="inline-flex items-center gap-3">
               <ScrollText size={14} className="opacity-60" />
               规则说明
