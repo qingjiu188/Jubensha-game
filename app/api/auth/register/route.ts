@@ -31,16 +31,30 @@ export async function POST(req: Request) {
   }
 
   // 后端唯一性校验（前端还有一层实时正则/查重）
-  const exists = await findUserByUsername(username);
-  if (exists) {
-    return NextResponse.json({ error: '该档案代号已被占用' }, { status: 409 });
+  // 注意：必须 try/catch，否则 serverless 写库失败会变成空 500，
+  // 前端 res.json() 解析失败被误报成「网络异常」
+  try {
+    const exists = await findUserByUsername(username);
+    if (exists) {
+      return NextResponse.json({ error: '该档案代号已被占用' }, { status: 409 });
+    }
+
+    const hash = await bcrypt.hash(key, 10);
+    const user = await createUser(username, hash);
+
+    return NextResponse.json({
+      ok: true,
+      user: { id: user.id, username: user.username, playerNo: user.playerNo },
+    });
+  } catch (e) {
+    return NextResponse.json(
+      {
+        error:
+          e instanceof Error && e.message.includes('SERVERLESS_NO_DATABASE')
+            ? '线上环境未配置云数据库（DATABASE_URL），无法注册。请联系部署者配置。'
+            : `注册写入失败：${e instanceof Error ? e.message.slice(0, 200) : String(e)}`,
+      },
+      { status: 500 },
+    );
   }
-
-  const hash = await bcrypt.hash(key, 10);
-  const user = await createUser(username, hash);
-
-  return NextResponse.json({
-    ok: true,
-    user: { id: user.id, username: user.username, playerNo: user.playerNo },
-  });
 }

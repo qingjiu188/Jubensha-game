@@ -277,7 +277,9 @@ let prismaState: PrismaState = 'unknown';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let prismaClient: any = null;
 
-/** 解析 DATABASE_URL 得到 host/port，做一次 250ms 的 TCP 探测 */
+/** 解析 DATABASE_URL 得到 host/port，做一次 TCP 探测。
+ *  超时 1500ms：serverless 冷启动 + 跨境云数据库（TiDB 新加坡等）TLS 握手
+ *  常会超过 250ms，探得太紧会误判「数据库不可用」而降级 JSON 模式（Vercel 上必炸）。 */
 function tcpProbe(url: string): Promise<boolean> {
   return new Promise((resolve) => {
     try {
@@ -288,7 +290,7 @@ function tcpProbe(url: string): Promise<boolean> {
       const timer = setTimeout(() => {
         socket.destroy();
         resolve(false);
-      }, 250);
+      }, 1500);
       socket.once('connect', () => {
         clearTimeout(timer);
         socket.destroy();
